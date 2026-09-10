@@ -509,12 +509,21 @@
         let latestTimestamp = -1;
 
         data.forEach(item => {
-          if (!item.name || !item.name.startsWith(`${userId}__`)) return;
-          const timestampPart = item.name.split('__')[1] || '';
-          const parsedTimestamp = parseInt(timestampPart, 10);
-          if (!Number.isFinite(parsedTimestamp)) return;
-          if (parsedTimestamp > latestTimestamp) {
-            latestTimestamp = parsedTimestamp;
+          if (!item.name) return;
+
+          // Current format: <user-id>__<timestamp>.jpg
+          if (item.name.startsWith(`${userId}__`)) {
+            const timestampPart = item.name.split('__')[1]?.split('.')[0] || '';
+            const parsedTimestamp = parseInt(timestampPart, 10);
+            if (Number.isFinite(parsedTimestamp) && parsedTimestamp > latestTimestamp) {
+              latestTimestamp = parsedTimestamp;
+              latestFileName = item.name;
+            }
+            return;
+          }
+
+          // Legacy format: <user-id>.jpg
+          if (item.name === `${userId}.jpg` && latestTimestamp < 0) {
             latestFileName = item.name;
           }
         });
@@ -925,12 +934,12 @@
 
           await clearStoredAvatar();
 
-          const storagePath = `avatars/${user.id}.jpg`;
+          const storagePath = `avatars/${user.id}__${Date.now()}.jpg`;
           const { error: uploadError } = await supabase.storage
             .from('chat-files')
             .upload(storagePath, avatarBlob, {
               contentType: 'image/jpeg',
-              upsert: true
+              upsert: false
             });
 
           if (uploadError) throw uploadError;
@@ -948,17 +957,15 @@
 
       drawFallbackPreview(avatarOutputCanvas);
 
-      const { data: avatarFiles } = await supabase.storage.from('chat-files').list('avatars', {
-        limit: 1000,
-        sortBy: { column: 'name', order: 'desc' }
-      });
-      if (avatarFiles && avatarFiles.some(item => item.name === `${user.id}.jpg`)) {
-        try {
-          await setAvatarFromUrl(getAvatarPublicUrl(`avatars/${user.id}.jpg`));
-        } catch (err) {
-          console.error('Failed to load stored avatar:', err);
-          drawFallbackPreview(avatarOutputCanvas);
+      try {
+        const latestAvatarPath = await getLatestAvatarPathForUser(user.id);
+        if (latestAvatarPath) {
+          const avatarUrl = getAvatarPublicUrl(latestAvatarPath) + `?v=${Date.now()}`;
+          await setAvatarFromUrl(avatarUrl);
         }
+      } catch (err) {
+        console.error('Failed to load stored avatar:', err);
+        drawFallbackPreview(avatarOutputCanvas);
       }
 
       if (currentRenderToken !== settingsRenderToken) return;
@@ -1080,7 +1087,13 @@
         const newUsername = document.getElementById('username').value.trim();
         const msgEl = document.getElementById('username-msg');
         try {
-          await supabase.from("users").update({ username: newUsername }).eq("id", user.id);
+          const { error } = await supabase
+            .from("users")
+            .update({ username: newUsername })
+            .eq("id", user.id);
+
+          if (error) throw error;
+
           msgEl.textContent = 'Username updated!';
           msgEl.className = 'status-msg status-success';
         } catch (err) {
