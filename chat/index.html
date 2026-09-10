@@ -916,6 +916,7 @@ let currentUserBanReason = "";
 
 let lastMessageTime = 0;
 const MESSAGE_COOLDOWN = 2000;
+const MESSAGE_PAGE_SIZE = 80;
 let historyPageOffset = 0;
 let isLoadingMore = false;
 let initialSnapshotReceived = false;
@@ -2601,12 +2602,12 @@ async function listenForNewMessages(user) {
     .from("messages")
     .select("*")
     .order("timestamp", { ascending: false })
-    .range(0, 19);
+    .range(0, MESSAGE_PAGE_SIZE - 1);
 
   if (initialPublic) {
     dbPublicMessages = initialPublic.map(m => ({ ...m, isWhisper: false, isSystemMessage: m.role === "system" })).reverse();
     initialSnapshotReceived = true;
-    if (initialPublic.length < 20) allMessagesLoaded = true;
+    if (initialPublic.length < MESSAGE_PAGE_SIZE) allMessagesLoaded = true;
     historyPageOffset = dbPublicMessages.length;
     renderMessages();
   }
@@ -2628,7 +2629,6 @@ async function listenForNewMessages(user) {
       const newMsg = { ...payload.new, isWhisper: false, isSystemMessage: payload.new.role === "system" };
       maybeNotifyForMention(newMsg);
       dbPublicMessages.push(newMsg);
-      if (dbPublicMessages.length > 40) dbPublicMessages.shift();
       renderMessages(true);
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, payload => {
@@ -3254,12 +3254,12 @@ async function handleScrollPagination() {
         .from("messages")
         .select("*")
         .order("timestamp", { ascending: false })
-        .range(historyPageOffset, historyPageOffset + 19);
+        .range(historyPageOffset, historyPageOffset + MESSAGE_PAGE_SIZE - 1);
 
       const existingBanner = document.getElementById("history-loading-banner");
       if (existingBanner) existingBanner.remove();
 
-      if (!olderMessages || olderMessages.length < 20) {
+      if (!olderMessages || olderMessages.length < MESSAGE_PAGE_SIZE) {
         allMessagesLoaded = true;
       }
 
