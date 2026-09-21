@@ -568,10 +568,27 @@
     .msg-content p { color: #f1f5f9; font-size: 1.05rem; font-weight: 600; line-height: 1.6; margin: 0; -webkit-text-fill-color: currentColor; }
     .msg-content p b, .msg-content p strong { font-weight: 700 !important; -webkit-text-fill-color: currentColor; color: inherit; }
 
+    .msg-reply-preview, .msg-forward-preview {
+      margin: 0 0 0.45rem 0; padding: 5px 9px 5px 10px; border-left: 3px solid var(--accent); border-radius: 5px;
+      background: rgba(108, 99, 255, 0.08); color: var(--text-muted); font-size: 0.82rem; line-height: 1.35;
+      max-width: 680px; cursor: pointer; transition: background 0.18s ease, border-color 0.18s ease; overflow: hidden;
+    }
+    .msg-reply-preview:hover, .msg-forward-preview:hover { background: rgba(108, 99, 255, 0.14); }
+    .msg-reply-preview .reply-author, .msg-forward-preview .forward-label { color: var(--text); font-weight: 800; font-size: 0.76rem; display: block; margin-bottom: 1px; }
+    .msg-reply-preview .reply-text, .msg-forward-preview .forward-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg-forward-preview { border-left-color: #8b5cf6; }
+    .msg-jump-highlight { animation: messageJumpHighlight 1.7s ease; background: rgba(250, 204, 21, 0.22) !important; border-radius: 8px; box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.45); }
+    @keyframes messageJumpHighlight {
+      0%, 100% { background: transparent; box-shadow: none; }
+      12%, 72% { background: rgba(250, 204, 21, 0.22); box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.45); }
+    }
+
     .msg-controls-tray { position: absolute; right: 10px; top: 12px; display: flex; gap: 8px; align-items: center; }
 
     .action-control-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
     .action-control-btn.btn-delete-msg:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; border-color: rgba(239, 68, 68, 0.4); }
+    .action-control-btn.btn-reply-msg:hover { background: rgba(108, 99, 255, 0.14); color: var(--text); border-color: rgba(108, 99, 255, 0.45); }
+    .action-control-btn.btn-forward-msg:hover { background: rgba(139, 92, 246, 0.14); color: var(--text); border-color: rgba(139, 92, 246, 0.45); }
 
     .tray-icon-img { width: 14px; height: 14px; object-fit: contain; pointer-events: none; opacity: 0.8; transition: opacity 0.2s var(--ease); }
     .action-control-btn:hover .tray-icon-img { opacity: 1; }
@@ -937,6 +954,7 @@ let currentMentionType = "";
 let isEditingMode = false;
 let editingMessageId = null;
 let editingCollectionTarget = "messages";
+let replyingToMessage = null;
 let allMessagesLoaded = false;
 
 let lastActionLog = null;
@@ -2307,6 +2325,15 @@ async function startChat(user) {
       return;
     }
 
+    const replyMetadata = replyingToMessage ? {
+      reply_to_id: replyingToMessage.id,
+      reply_to_collection: replyingToMessage.collection,
+      reply_to_username: replyingToMessage.username || "User",
+      reply_to_text: replyingToMessage.text || ""
+    } : {};
+    replyingToMessage = null;
+    input.placeholder = "Type a message or / for a command...";
+
     const isAdminPlus = currentUserRole === "admin" || currentUserRole === "owner";
     const now = Date.now();
     if (!isAdminPlus && now - lastMessageTime < MESSAGE_COOLDOWN) return;
@@ -2707,7 +2734,8 @@ async function startChat(user) {
           avatar: currentUsername && currentUsername.length > 0 ? currentUsername[0].toUpperCase() : "U",
           participants: participantIds,
           role: currentUserRole,
-          clientSideId: clientSideId
+          clientSideId: clientSideId,
+          ...replyMetadata
         };
 
         if (isOmoggleCommand) {
@@ -2724,7 +2752,8 @@ async function startChat(user) {
           userId: user.id,
           avatar: currentUsername && currentUsername.length > 0 ? currentUsername[0].toUpperCase() : "U",
           role: currentUserRole,
-          clientSideId: clientSideId
+          clientSideId: clientSideId,
+          ...replyMetadata
         }]);
         if (error) throw error;
       }
@@ -2857,6 +2886,107 @@ async function listenForNewMessages(user) {
     .subscribe();
 }
 
+async function jumpToMessage(collection, messageId) {
+  if (!collection || messageId === null || messageId === undefined) return;
+  const selector = (value) => {
+    const escaped = window.CSS && CSS.escape ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, "\\function renderMessages(forceScrollDown = false) {");
+    return `[data-message-collection="${collection}"][data-message-id="${escaped}"]`;
+  };
+
+  let target = document.querySelector(selector(messageId));
+  if (!target) {
+    try {
+      const { data, error } = await supabase.from(collection).select("*").eq("id", messageId).maybeSingle();
+      if (!error && data) {
+        const normalized = {
+          ...data,
+          isWhisper: collection === "whispers",
+          isSystemMessage: collection === "messages" ? data.role === "system" : (data.isOmoggleInvite === true || data.type === "vc_invite" || data.role === "system")
+        };
+        const list = collection === "messages" ? dbHistoricalMessages : dbPrivateMessages;
+        if (!list.some(m => m.id === normalized.id)) list.push(normalized);
+        renderMessages();
+        target = document.querySelector(selector(messageId));
+      }
+    } catch (error) {
+      console.warn("Could not load referenced message:", error);
+    }
+  }
+
+  if (!target) {
+    showLocalSystemMessage("That message could not be found.", true);
+    return;
+  }
+
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.remove("msg-jump-highlight");
+  void target.offsetWidth;
+  target.classList.add("msg-jump-highlight");
+  setTimeout(() => target.classList.remove("msg-jump-highlight"), 1800);
+}
+
+function setReplyTarget(msgData, collection) {
+  if (!msgData || msgData.id === undefined || msgData.id === null) return;
+  if (replyingToMessage && replyingToMessage.id === msgData.id && replyingToMessage.collection === collection) {
+    replyingToMessage = null;
+    const input = document.getElementById("message-input");
+    if (input) input.placeholder = "Type a message or / for a command...";
+    return;
+  }
+  replyingToMessage = { id: msgData.id, collection, username: msgData.username || "User", text: msgData.text || "" };
+  const input = document.getElementById("message-input");
+  if (input) {
+    input.placeholder = `Reply to @${replyingToMessage.username}...`;
+    input.focus();
+  }
+}
+
+async function forwardMessage(msgData, collection) {
+  if (!msgData || msgData.id === undefined || msgData.id === null || !currentUser) return;
+  if (msgData.isSystemMessage || msgData.isOmoggleInvite) {
+    showLocalSystemMessage("This message cannot be forwarded.", true);
+    return;
+  }
+  if (currentUserMutedUntil && Date.now() < currentUserMutedUntil) {
+    startCooldownTimer(currentUserMutedUntil);
+    return;
+  }
+  const isAdminPlus = currentUserRole === "admin" || currentUserRole === "owner";
+  const now = Date.now();
+  if (!isAdminPlus && now - lastMessageTime < MESSAGE_COOLDOWN) return;
+
+  const clientSideId = "msg-" + Date.now() + Math.random().toString(36).substring(2);
+  const base = {
+    text: msgData.text || "",
+    username: currentUsername,
+    avatar: currentUsername ? currentUsername[0].toUpperCase() : "U",
+    role: currentUserRole,
+    clientSideId,
+    forward_of_id: msgData.id,
+    forward_of_collection: collection,
+    forward_of_username: msgData.username || "User",
+    forward_of_text: msgData.text || ""
+  };
+
+  try {
+    if (collection === "whispers") {
+      const participants = Array.isArray(msgData.participants) && msgData.participants.length > 0 ? msgData.participants : [currentUser.id];
+      const { error } = await supabase.from("whispers").insert([{
+        ...base, senderId: currentUser.id, participants, isWhisper: true, isSystemMessage: false
+      }]);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("messages").insert([{ ...base, userId: currentUser.id }]);
+      if (error) throw error;
+    }
+    lastMessageTime = now;
+    if (!isAdminPlus) startCooldownTimer();
+  } catch (error) {
+    console.error("Failed to forward message:", error);
+    showLocalSystemMessage(error.message || "Failed to forward message.", true);
+  }
+}
+
 function renderMessages(forceScrollDown = false) {
   if (currentUserBannedUntil && Date.now() < currentUserBannedUntil) {
     handleBannedUserDisplay();
@@ -2917,8 +3047,13 @@ function renderMessages(forceScrollDown = false) {
 
 function displayMessage(scroller, msgData) {
   const div = document.createElement("div");
+  const dataCollectionTargetStr = msgData.isWhisper ? "whispers" : "messages";
   div.className = "msg-block" + (msgData.isPending ? " pending" : "");
   if(msgData.clientSideId) div.id = msgData.clientSideId;
+  if(msgData.id !== undefined && msgData.id !== null) {
+    div.dataset.messageId = String(msgData.id);
+    div.dataset.messageCollection = dataCollectionTargetStr;
+  }
 
   const time = msgData.timestamp ? new Date(msgData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Sending...";
 
@@ -3030,15 +3165,34 @@ function displayMessage(scroller, msgData) {
     `;
   } else {
     let staticControlsTrayHTML = "";
-    if (currentUser && (currentUser.id === msgData.userId || currentUser.id === msgData.senderId || currentUserRole === "admin" || currentUserRole === "owner")) {
+    const replyPreviewHTML = msgData.reply_to_id !== null && msgData.reply_to_id !== undefined ? `
+      <div class="msg-reply-preview" data-jump-collection="${escapeHtml(msgData.reply_to_collection || "messages")}" data-jump-id="${escapeHtml(String(msgData.reply_to_id))}" title="Jump to replied message">
+        <span class="reply-author">↪ ${escapeHtml(msgData.reply_to_username || "User")}</span>
+        <span class="reply-text">${escapeHtml(msgData.reply_to_text || "Message")}</span>
+      </div>
+    ` : "";
+    const forwardPreviewHTML = msgData.forward_of_id !== null && msgData.forward_of_id !== undefined ? `
+      <div class="msg-forward-preview" data-jump-collection="${escapeHtml(msgData.forward_of_collection || "messages")}" data-jump-id="${escapeHtml(String(msgData.forward_of_id))}" title="Jump to forwarded message">
+        <span class="forward-label">Forwarded</span>
+        <span class="forward-text">${escapeHtml(msgData.forward_of_text || msgData.text || "Message")}</span>
+      </div>
+    ` : "";
+    if (msgData.id !== undefined && msgData.id !== null) {
+      const canModify = currentUser && (currentUser.id === msgData.userId || currentUser.id === msgData.senderId || currentUserRole === "admin" || currentUserRole === "owner");
       staticControlsTrayHTML = `
         <div class="msg-controls-tray">
-          <button class="action-control-btn btn-edit-msg" title="Modify Context">
+          <button class="action-control-btn btn-reply-msg" title="Reply">
+            <img src="../assets/chat-reply.svg" alt="Reply" class="tray-icon-img">
+          </button>
+          <button class="action-control-btn btn-forward-msg" title="Forward">
+            <img src="../assets/chat-forward.svg" alt="Forward" class="tray-icon-img">
+          </button>
+          ${canModify ? `<button class="action-control-btn btn-edit-msg" title="Modify Context">
             <img src="../assets/chat-pencil.svg" alt="Edit" class="tray-icon-img">
           </button>
           <button class="action-control-btn btn-delete-msg" title="Purge Record">
             <img src="../assets/chat-trash.svg" alt="Delete" class="tray-icon-img">
-          </button>
+          </button>` : ""}
         </div>
       `;
     }
@@ -3046,6 +3200,8 @@ function displayMessage(scroller, msgData) {
     layoutStructuralString = `
       <div class="msg-avatar"></div>
       <div class="msg-content">
+        ${replyPreviewHTML}
+        ${forwardPreviewHTML}
         <div class="msg-top">
           <h5>${safeUsername} <span>${time}</span> ${statusBadgeHTML} ${whisperTag}</h5>
         </div>
@@ -3095,9 +3251,31 @@ function displayMessage(scroller, msgData) {
     }
   }
 
+  const replyBtn = div.querySelector(".btn-reply-msg");
+  const forwardBtn = div.querySelector(".btn-forward-msg");
   const editBtn = div.querySelector(".btn-edit-msg");
   const deleteBtn = div.querySelector(".btn-delete-msg");
-  const dataCollectionTargetStr = msgData.isWhisper ? "whispers" : "messages";
+
+  if (replyBtn) {
+    replyBtn.onclick = (e) => {
+      e.stopPropagation();
+      setReplyTarget(msgData, dataCollectionTargetStr);
+    };
+  }
+
+  if (forwardBtn) {
+    forwardBtn.onclick = async (e) => {
+      e.stopPropagation();
+      await forwardMessage(msgData, dataCollectionTargetStr);
+    };
+  }
+
+  div.querySelectorAll(".msg-reply-preview, .msg-forward-preview").forEach(preview => {
+    preview.addEventListener("click", (e) => {
+      e.stopPropagation();
+      jumpToMessage(preview.dataset.jumpCollection, preview.dataset.jumpId);
+    });
+  });
 
   if (editBtn) {
     editBtn.onclick = () => {
