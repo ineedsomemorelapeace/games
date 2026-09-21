@@ -968,6 +968,47 @@ let vcScreenStream = null;
 let vcCalls = new Map();
 let vcRemoteStreams = new Map();
 let vcRealtimeChannel = null;
+let vcPeerLastSeen = new Map();
+let vcHeartbeatInterval = null;
+let vcChannelTransition = Promise.resolve();
+let vcPresenceGeneration = 0;
+const VC_HEARTBEAT_INTERVAL_MS = 20000;
+const VC_PEER_TIMEOUT_MS = 60000;
+let chatStartedUserId = null;
+let chatProfilePollInterval = null;
+let authInitializationUserId = null;
+
+async function removeSupabaseChannel(channel) {
+  if (!channel) return;
+  try {
+    await supabase.removeChannel(channel);
+  } catch (error) {
+    console.warn('Failed to remove Supabase channel:', error);
+  }
+}
+
+async function stopChatRuntime() {
+  if (chatProfilePollInterval) {
+    clearInterval(chatProfilePollInterval);
+    chatProfilePollInterval = null;
+  }
+
+  const channelsToRemove = [publicChannel, privateChannel, userProfileChannel];
+  publicChannel = null;
+  privateChannel = null;
+  userProfileChannel = null;
+  await Promise.all(channelsToRemove.map(removeSupabaseChannel));
+
+  const scroller = document.getElementById('message-scroller');
+  if (scroller) scroller.removeEventListener('scroll', handleScrollPagination);
+
+  chatStartedUserId = null;
+  initialSnapshotReceived = false;
+
+  if (vcActiveRoomId || vcPeer || vcLocalStream || vcRealtimeChannel) {
+    await leaveVoiceRoom({ cleanupRoom: false });
+  }
+}
 
 /* HELPER TIMEOUT FOR ALL DURATION STRINGS */
 function parseDurationString(str) {
@@ -1003,6 +1044,8 @@ setTimeout(() => {
 supabase.auth.onAuthStateChange(async (event, session) => {
   const user = session?.user || null;
   if (!user) {
+    authInitializationUserId = null;
+    await stopChatRuntime();
     currentUser = null;
     currentUsername = "User";
     currentUserRole = "user";
@@ -1014,12 +1057,15 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     return;
   }
 
+  if (authInitializationUserId === user.id) return;
+  authInitializationUserId = user.id;
+
   currentUser = user;
   currentUsername = user.email ? user.email.split("@")[0] : "User";
 
   const { data: profile, error } = await supabase
     .from("users")
-    .select("*")
+    .select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt")
     .eq("id", user.id)
     .single();
 
@@ -1040,7 +1086,8 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     currentUserBanReason = profile.banReason || "";
   }
 
-  if (userProfileChannel) userProfileChannel.unsubscribe();
+  await removeSupabaseChannel(userProfileChannel);
+  userProfileChannel = null;
   userProfileChannel = supabase
     .channel(`public:users:id=eq.${user.id}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${user.id}` }, payload => {
@@ -1145,7 +1192,7 @@ function handleBannedUserDisplay() {
 
 async function loadAndCacheAllUsers() {
   try {
-    const { data: usersData } = await supabase.from("users").select("*");
+    const { data: usersData } = await supabase.from("users").select("id, username, email, role, rank, createdAt");
     if (usersData) {
       allRegisteredUsers = usersData.map(u => ({
         id: u.id,
@@ -1246,6 +1293,13 @@ async function ensureNotificationPermission() {
   if (Notification.permission === 'granted') return 'granted';
   if (Notification.permission === 'denied') return 'denied';
   return await Notification.requestPermission();
+}
+
+function requestNotificationPermissionInBackground() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+  void ensureNotificationPermission().catch(error => {
+    console.warn('Notification permission request failed:', error);
+  });
 }
 
 function getMentionTargets(text) {
@@ -1530,6 +1584,7 @@ function setParticipantMediaState(peerId, state) {
 }
 
 async function joinVoiceRoom(roomId) {
+  if (!roomId || vcActiveRoomId || vcPeer || vcLocalStream) return;
   vcActiveRoomId = roomId;
   const dock = document.getElementById('vc-dock-container');
   if (dock) {
@@ -1537,13 +1592,23 @@ async function joinVoiceRoom(roomId) {
     dock.style.flexDirection = 'column';
   }
 
-  if (!currentUser) return;
+  if (!currentUser) {
+    vcActiveRoomId = null;
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showLocalSystemMessage('Voice chat is not supported by this browser.', true);
+    vcActiveRoomId = null;
+    return;
+  }
 
   try {
     vcLocalStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   } catch (err) {
     console.error('Failed to get media:', err);
     showLocalSystemMessage('Could not access camera/microphone. Please check permissions.', true);
+    vcActiveRoomId = null;
     return;
   }
 
@@ -1555,6 +1620,9 @@ async function joinVoiceRoom(roomId) {
   if (typeof Peer === 'undefined') {
     console.error('PeerJS library not loaded');
     showLocalSystemMessage('Voice chat system failed to initialize.', true);
+    vcLocalStream.getTracks().forEach(track => track.stop());
+    vcLocalStream = null;
+    vcActiveRoomId = null;
     return;
   }
 
@@ -1568,8 +1636,15 @@ async function joinVoiceRoom(roomId) {
 
   vcPeer.on('call', (call) => {
     console.log('Incoming call from:', call.peer);
-    if (!vcCalls.has(call.peer)) {
-      vcCalls.set(call.peer, call);
+    if (vcCalls.has(call.peer)) {
+      try { call.close(); } catch (error) { console.warn('Failed to close duplicate voice call:', error); }
+      return;
+    }
+    vcCalls.set(call.peer, call);
+    if (!vcLocalStream) {
+      try { call.close(); } catch (error) { console.warn('Failed to close call without local media:', error); }
+      vcCalls.delete(call.peer);
+      return;
     }
     call.answer(vcLocalStream);
     handleIncomingCall(call);
@@ -1584,9 +1659,8 @@ async function joinVoiceRoom(roomId) {
 
   vcPeer.on('disconnected', () => {
     console.log('PeerJS disconnected');
-    if (vcActiveRoomId) {
-      vcPeer.reconnect();
-    }
+    clearVCPeerConnectionsForReconnect();
+    if (vcActiveRoomId && vcPeer && !vcPeer.destroyed) vcPeer.reconnect();
   });
 
   subscribeToVCChannel(roomId);
@@ -1601,48 +1675,104 @@ async function joinVoiceRoom(roomId) {
     isSpeaking: false
   };
   vcParticipants.set(myPeerId, localParticipant);
+  vcPeerLastSeen.set(myPeerId, Date.now());
   updateGridParticipantLayout(Array.from(vcParticipants.values()));
 }
 
-function broadcastVCPresence(roomId, peerId) {
-  if (vcRealtimeChannel) {
-    vcRealtimeChannel.unsubscribe();
-  }
-
-  vcRealtimeChannel = supabase.channel(`vc_room_${roomId}`, {
-    config: { broadcast: { self: false } }
+function clearVCPeerConnectionsForReconnect() {
+  vcCalls.forEach(call => {
+    try { call.close(); } catch (error) { console.warn('Failed to close stale voice call:', error); }
   });
+  vcCalls.clear();
 
-  vcRealtimeChannel
-    .on('broadcast', { event: 'vc-join' }, ({ payload }) => {
-      handleVCJoinEvent(payload);
-    })
-    .on('broadcast', { event: 'vc-leave' }, ({ payload }) => {
-      handleVCLeaveEvent(payload);
-    })
-    .on('broadcast', { event: 'vc-state' }, ({ payload }) => {
-      handleVCStateEvent(payload);
-    })
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        vcRealtimeChannel.send({
-          type: 'broadcast',
-          event: 'vc-join',
-          payload: {
-            peerId: peerId,
-            userId: currentUser.id,
-            username: currentUsername,
-            timestamp: Date.now()
-          }
-        });
+  vcRemoteStreams.forEach(stream => stream.getTracks().forEach(track => track.stop()));
+  vcRemoteStreams.clear();
+
+  const localPeerId = vcPeer?.id;
+  vcParticipants = new Map([...vcParticipants].filter(([peerId]) => peerId === localPeerId));
+  vcPeerLastSeen = new Map([...vcPeerLastSeen].filter(([peerId]) => peerId === localPeerId));
+  updateGridParticipantLayout(Array.from(vcParticipants.values()));
+}
+
+function startVCPresenceHeartbeat(roomId, peerId) {
+  if (vcHeartbeatInterval) clearInterval(vcHeartbeatInterval);
+
+  vcHeartbeatInterval = setInterval(() => {
+    const now = Date.now();
+    vcPeerLastSeen.forEach((lastSeen, remotePeerId) => {
+      if (remotePeerId !== peerId && now - lastSeen > VC_PEER_TIMEOUT_MS) {
+        removeVCPeer(remotePeerId);
       }
     });
+
+    if (vcRealtimeChannel && vcActiveRoomId === roomId) {
+      vcRealtimeChannel.send({
+        type: 'broadcast',
+        event: 'vc-heartbeat',
+        payload: {
+          peerId,
+          userId: currentUser?.id,
+          timestamp: now
+        }
+      });
+    }
+  }, VC_HEARTBEAT_INTERVAL_MS);
+}
+
+function broadcastVCPresence(roomId, peerId) {
+  const generation = ++vcPresenceGeneration;
+  vcChannelTransition = vcChannelTransition.then(async () => {
+    if (generation !== vcPresenceGeneration || !vcActiveRoomId) return;
+
+    await removeSupabaseChannel(vcRealtimeChannel);
+    vcRealtimeChannel = null;
+
+    const channel = supabase.channel(`vc_room_${roomId}`, {
+      config: { broadcast: { self: false } }
+    });
+    vcRealtimeChannel = channel;
+
+    channel
+      .on('broadcast', { event: 'vc-join' }, ({ payload }) => {
+        handleVCJoinEvent(payload);
+      })
+      .on('broadcast', { event: 'vc-leave' }, ({ payload }) => {
+        handleVCLeaveEvent(payload);
+      })
+      .on('broadcast', { event: 'vc-state' }, ({ payload }) => {
+        handleVCStateEvent(payload);
+      })
+      .on('broadcast', { event: 'vc-heartbeat' }, ({ payload }) => {
+        handleVCHeartbeatEvent(payload);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED' && generation === vcPresenceGeneration && vcRealtimeChannel === channel) {
+          channel.send({
+            type: 'broadcast',
+            event: 'vc-join',
+            payload: {
+              peerId: peerId,
+              userId: currentUser.id,
+              username: currentUsername,
+              timestamp: Date.now()
+            }
+          });
+          startVCPresenceHeartbeat(roomId, peerId);
+        }
+      });
+  }).catch(error => {
+    console.error('Failed to restore VC presence:', error);
+  });
+
+  return vcChannelTransition;
 }
 
 function handleVCJoinEvent(payload) {
   const { peerId, username, userId } = payload;
   
   if (!peerId || peerId === vcPeer?.id) return;
+
+  vcPeerLastSeen.set(peerId, Date.now());
 
   if (!vcParticipants.has(peerId)) {
     vcParticipants.set(peerId, {
@@ -1664,12 +1794,19 @@ function handleVCJoinEvent(payload) {
   }
 }
 
+function handleVCHeartbeatEvent(payload) {
+  const { peerId } = payload || {};
+  if (!peerId || peerId === vcPeer?.id) return;
+  vcPeerLastSeen.set(peerId, Date.now());
+}
+
 function handleVCLeaveEvent(payload) {
   const { peerId } = payload;
   if (!peerId || peerId === vcPeer?.id) return;
+  removeVCPeer(peerId);
+}
 
-  vcParticipants.delete(peerId);
-  
+function removeVCPeer(peerId) {
   const remoteStream = vcRemoteStreams.get(peerId);
   if (remoteStream) {
     remoteStream.getTracks().forEach(track => track.stop());
@@ -1678,10 +1815,12 @@ function handleVCLeaveEvent(payload) {
 
   const call = vcCalls.get(peerId);
   if (call) {
-    call.close();
+    try { call.close(); } catch (error) { console.warn('Failed to close voice call:', error); }
     vcCalls.delete(peerId);
   }
 
+  vcParticipants.delete(peerId);
+  vcPeerLastSeen.delete(peerId);
   updateGridParticipantLayout(Array.from(vcParticipants.values()));
 }
 
@@ -1711,6 +1850,14 @@ function callPeer(peerId) {
 }
 
 function handleIncomingCall(call) {
+  if (!call || !call.peer || call.peer === vcPeer?.id) return;
+  const existingCall = vcCalls.get(call.peer);
+  if (existingCall && existingCall !== call) {
+    try { call.close(); } catch (error) { console.warn('Failed to close duplicate voice call:', error); }
+    return;
+  }
+
+  vcCalls.set(call.peer, call);
   call.on('stream', (remoteStream) => {
     console.log('Received stream from:', call.peer);
     vcRemoteStreams.set(call.peer, remoteStream);
@@ -1732,20 +1879,37 @@ function handleIncomingCall(call) {
 
   call.on('close', () => {
     console.log('Call closed with:', call.peer);
-    vcCalls.delete(call.peer);
-    vcRemoteStreams.delete(call.peer);
+    if (vcCalls.get(call.peer) === call) vcCalls.delete(call.peer);
+    const remoteStream = vcRemoteStreams.get(call.peer);
+    if (remoteStream) {
+      remoteStream.getTracks().forEach(track => track.stop());
+      vcRemoteStreams.delete(call.peer);
+    }
+    if (vcParticipants.has(call.peer)) {
+      vcParticipants.delete(call.peer);
+      updateGridParticipantLayout(Array.from(vcParticipants.values()));
+    }
   });
 
   call.on('error', (err) => {
     console.error('Call error:', err);
+    removeVCPeer(call.peer);
   });
 }
 
 function subscribeToVCChannel(roomId) {}
 
-async function leaveVoiceRoom() {
+async function leaveVoiceRoom({ cleanupRoom = true } = {}) {
+  vcPresenceGeneration += 1;
+  if (vcHeartbeatInterval) {
+    clearInterval(vcHeartbeatInterval);
+    vcHeartbeatInterval = null;
+  }
+
   if (vcRealtimeChannel) {
-    vcRealtimeChannel.send({
+    const channel = vcRealtimeChannel;
+    vcRealtimeChannel = null;
+    channel.send({
       type: 'broadcast',
       event: 'vc-leave',
       payload: {
@@ -1753,11 +1917,10 @@ async function leaveVoiceRoom() {
         timestamp: Date.now()
       }
     });
-    vcRealtimeChannel.unsubscribe();
-    vcRealtimeChannel = null;
+    await removeSupabaseChannel(channel);
   }
 
-  if (vcActiveRoomId && vcParticipants.size <= 1) {
+  if (cleanupRoom && vcActiveRoomId && vcParticipants.size <= 1) {
     try {
       await supabase.from("vc_rooms").delete().eq("room_id", vcActiveRoomId);
       await supabase.from("messages").update({ text: "This call has ended." }).eq("room_id", vcActiveRoomId);
@@ -1781,6 +1944,7 @@ async function leaveVoiceRoom() {
     stream.getTracks().forEach(track => track.stop());
   });
   vcRemoteStreams.clear();
+  vcPeerLastSeen.clear();
 
   vcCalls.forEach((call) => {
     call.close();
@@ -1788,7 +1952,7 @@ async function leaveVoiceRoom() {
   vcCalls.clear();
 
   if (vcPeer) {
-    vcPeer.destroy();
+    try { vcPeer.destroy(); } catch (error) { console.warn('Failed to destroy PeerJS instance:', error); }
     vcPeer = null;
   }
   vcPeerId = null;
@@ -2011,13 +2175,15 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function startChat(user) {
+  if (!user?.id || chatStartedUserId === user.id) return;
+  chatStartedUserId = user.id;
+
   const input = document.getElementById("message-input");
   const btn = document.getElementById("send-message-btn");
   const scroller = document.getElementById("message-scroller");
   const fileInput = document.getElementById("file-input");
   const uploadBtn = document.getElementById("upload-btn");
 
-  await ensureNotificationPermission();
   await loadAndCacheAllUsers();
   await loadAvatarIndex();
 
@@ -2025,7 +2191,7 @@ async function startChat(user) {
   scroller.addEventListener("scroll", handleScrollPagination);
   setupAutocompleteEngine(input);
   
-  setInterval(async () => {
+  chatProfilePollInterval = setInterval(async () => {
     if (!currentUser) return;
     const { data: profile, error } = await supabase.from("users").select("bannedUntil, mutedUntil, role").eq("id", currentUser.id).single();
     if (profile && !error) {
@@ -2147,6 +2313,7 @@ async function startChat(user) {
 
     input.value = "";
     lastMessageTime = now;
+    requestNotificationPermissionInBackground();
     clearEphemeralSystemMessages();
 
     if (!isAdminPlus) {
@@ -2622,7 +2789,8 @@ async function listenForNewMessages(user) {
     renderMessages();
   }
 
-  if (publicChannel) publicChannel.unsubscribe();
+  await removeSupabaseChannel(publicChannel);
+  publicChannel = null;
   publicChannel = supabase
     .channel('public:messages')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
@@ -2645,7 +2813,8 @@ async function listenForNewMessages(user) {
     })
     .subscribe();
 
-  if (privateChannel) privateChannel.unsubscribe();
+  await removeSupabaseChannel(privateChannel);
+  privateChannel = null;
   privateChannel = supabase
     .channel('public:whispers')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whispers' }, payload => {
@@ -3349,6 +3518,9 @@ window.joinVoiceRoom = joinVoiceRoom;
 window.leaveVoiceRoom = leaveVoiceRoom;
 window.setParticipantMediaState = setParticipantMediaState;
 window.updateGridParticipantLayout = updateGridParticipantLayout;
+window.addEventListener('pagehide', () => {
+  stopChatRuntime();
+}, { once: true });
 
 /* ── DOM READY INITIALIZATION SAFEGUARD ────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
