@@ -57,9 +57,6 @@
     .scale-needle { position: absolute; top: -6px; width: 20px; height: 20px; background: var(--accent); border: 3px solid #fff; border-radius: 50%; transform: translateX(-50%); transition: left 0.25s ease; }
     .result-announcement { font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; margin-bottom: 1rem; display: none; }
     .action-row { margin-top: 1.5rem; display: flex; gap: 12px; }
-    .voice-controls { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 0 0 1rem; }
-    .voice-btn { min-height: 44px; padding: 0.7rem 1rem; }
-    .voice-btn.off { background: var(--surface); border: 1px solid var(--border); }
   </style>
   <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
 </head>
@@ -109,11 +106,6 @@
             <video id="opponent-video" autoplay playsinline></video>
             <div id="opp-aura-val" class="live-metrics">Aura: +500</div>
           </div>
-        </div>
-
-        <div class="voice-controls">
-          <button id="btn-mic" class="btn-primary voice-btn" type="button">🎙️ Mic On</button>
-          <button id="btn-audio" class="btn-primary voice-btn" type="button">🔊 Audio On</button>
         </div>
 
         <div class="scale-wrapper">
@@ -267,11 +259,6 @@
     const lobbyMsg = document.getElementById('lobby-msg');
     const userVideo = document.getElementById('user-video');
     const opponentVideo = document.getElementById('opponent-video');
-    const btnMic = document.getElementById('btn-mic');
-    const btnAudio = document.getElementById('btn-audio');
-
-    let micEnabled = true;
-    let remoteAudioEnabled = true;
 
     const urlParams = new URLSearchParams(window.location.search);
     const privateRoomId = urlParams.get('room');
@@ -303,51 +290,6 @@
       }
       if (userVideo) userVideo.srcObject = null;
       if (opponentVideo) opponentVideo.srcObject = null;
-      micEnabled = true;
-      remoteAudioEnabled = true;
-      updateVoiceButtons();
-    }
-
-    function updateVoiceButtons() {
-      if (btnMic) {
-        btnMic.textContent = micEnabled ? "🎙️ Mic On" : "🔇 Mic Off";
-        btnMic.classList.toggle("off", !micEnabled);
-      }
-      if (btnAudio) {
-        btnAudio.textContent = remoteAudioEnabled ? "🔊 Audio On" : "🔇 Audio Off";
-        btnAudio.classList.toggle("off", !remoteAudioEnabled);
-      }
-    }
-
-    async function enableRemoteAudio() {
-      if (!opponentVideo) return;
-      remoteAudioEnabled = true;
-      opponentVideo.muted = false;
-      try {
-        await opponentVideo.play();
-      } catch (e) {
-        console.warn("Remote audio playback needs a user gesture:", e);
-      }
-      updateVoiceButtons();
-    }
-
-    function toggleMic() {
-      if (!myMediaStream) return;
-      const audioTracks = myMediaStream.getAudioTracks();
-      if (!audioTracks.length) return;
-      micEnabled = !micEnabled;
-      audioTracks.forEach(track => { track.enabled = micEnabled; });
-      updateVoiceButtons();
-    }
-
-    async function toggleRemoteAudio() {
-      if (!opponentVideo) return;
-      remoteAudioEnabled = !remoteAudioEnabled;
-      opponentVideo.muted = !remoteAudioEnabled;
-      if (remoteAudioEnabled) {
-        try { await opponentVideo.play(); } catch (e) {}
-      }
-      updateVoiceButtons();
     }
 
     async function safeAcquireCameraStream() {
@@ -355,11 +297,7 @@
       try {
         myMediaStream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
+          audio: false
         });
         userVideo.srcObject = myMediaStream;
         return true;
@@ -620,11 +558,7 @@
 
         if (!isHost && myMediaStream) {
           const call = peer.call(conn.peer, myMediaStream);
-          call.on('stream', (stream) => {
-            opponentVideo.srcObject = stream;
-            opponentVideo.muted = !remoteAudioEnabled;
-            enableRemoteAudio();
-          });
+          call.on('stream', (stream) => { opponentVideo.srcObject = stream; });
         }
         runShowdownEngine();
       });
@@ -727,9 +661,6 @@
 
     btnStart.addEventListener('click', startMatchmaking);
     btnCancel.addEventListener('click', cancelSearch);
-    if (btnMic) btnMic.addEventListener('click', toggleMic);
-    if (btnAudio) btnAudio.addEventListener('click', toggleRemoteAudio);
-    updateVoiceButtons();
     btnNext.addEventListener('click', async () => {
       clearLoops();
       safelyStopCameraTracks();
