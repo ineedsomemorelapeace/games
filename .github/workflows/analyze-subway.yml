@@ -102,3 +102,5 @@ jobs:
           git add tools/subwaysurferssf-il2cpp-analysis.md
           git diff --cached --quiet || git commit -m "Analyze Subway Surfers WebGL gameplay code"
           git push
+
+# analysis workflow active
