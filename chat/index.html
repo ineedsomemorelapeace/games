@@ -2332,7 +2332,6 @@ async function startChat(user) {
       reply_to_text: replyingToMessage.text || ""
     } : {};
     replyingToMessage = null;
-    input.placeholder = "Type a message or / for a command...";
 
     const isAdminPlus = currentUserRole === "admin" || currentUserRole === "owner";
     const now = Date.now();
@@ -2930,7 +2929,7 @@ function setReplyTarget(msgData, collection) {
   if (replyingToMessage && replyingToMessage.id === msgData.id && replyingToMessage.collection === collection) {
     replyingToMessage = null;
     const input = document.getElementById("message-input");
-    if (input) input.placeholder = "Type a message or / for a command...";
+    if (input) input.focus();
     return;
   }
   replyingToMessage = { id: msgData.id, collection, username: msgData.username || "User", text: msgData.text || "" };
