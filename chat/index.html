@@ -919,6 +919,7 @@ const EX_COMMANDS = [
   { name: "/unowner", desc: "Demote an Owner to Admin {/unowner @user}" },
   { name: "/w", desc: "Whisper privately to a user {/w @user message}" },
   { name: "/warn", desc: "Issue a formal warning to a user {/warn @user reason}" },
+  { name: "/userinfo", desc: "Show a user's complete database profile locally {/userinfo @user}" },
   { name: "/whisper", desc: "Whisper privately to a user {/whisper @user message}" }
 ].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -2488,6 +2489,52 @@ async function startChat(user) {
         return;
       }
 
+      if (commandKey === "/userinfo" && isAdminPlus) {
+        const targetUser = await resolveTargetUser();
+        if (!targetUser) {
+          showLocalSystemMessage("Syntax: /userinfo @username", true);
+          return;
+        }
+
+        const { data: userRow, error } = await supabase
+          .from("users")
+          .select("*")
+          .eq("id", targetUser.id)
+          .maybeSingle();
+
+        if (error) {
+          showLocalSystemMessage(`Failed to load @${targetUser.username}'s user row: ${error.message}`, true);
+          return;
+        }
+        if (!userRow) {
+          showLocalSystemMessage(`No database user row found for @${targetUser.username}.`, true);
+          return;
+        }
+
+        const fields = Object.entries(userRow).map(([key, value]) => {
+          let displayValue;
+          if (value === null) displayValue = "null";
+          else if (typeof value === "object") {
+            try { displayValue = JSON.stringify(value); } catch (_) { displayValue = String(value); }
+          } else {
+            displayValue = String(value);
+          }
+          return `${key}=${displayValue}`;
+        });
+
+        if (userRow.createdAt !== undefined && userRow.createdAt !== null) {
+          const createdDate = new Date(userRow.createdAt);
+          if (!Number.isNaN(createdDate.getTime())) {
+            fields.push(`createdAtReadable=${createdDate.toLocaleString()}`);
+          }
+        }
+
+        // This is deliberately a local system message: it is never inserted into
+        // messages/whispers, so other chat users cannot see the result.
+        showLocalSystemMessage(`User info for @${userRow.username || targetUser.username}: ${fields.join(" | ")}`, false);
+        return;
+      }
+
       if (commandKey === "/ban" && isAdminPlus) {
         const targetUser = await resolveTargetUser();
         const durationStr = effectiveSegments[2];
@@ -3369,7 +3416,7 @@ function setupAutocompleteEngine(input) {
     if (val.startsWith("/")) {
       if (currentWordIdx === 0) {
         const clearCommands = EX_COMMANDS.filter(c => {
-          if (["/mute", "/unmute", "/ban", "/unban", "/permaban", "/deleteall", "/kick", "/warn"].includes(c.name)) {
+          if (["/mute", "/unmute", "/ban", "/unban", "/permaban", "/deleteall", "/kick", "/warn", "/userinfo"].includes(c.name)) {
             return currentUserRole === "admin" || currentUserRole === "owner";
           }
           if (["/admin", "/unadmin", "/owner", "/unowner", "/subscription", "/deleteuser"].includes(c.name)) {
@@ -3389,12 +3436,12 @@ function setupAutocompleteEngine(input) {
     }
 
     const baseCommandContext = words[0].toLowerCase();
-    const targetAutocompleteCommands = ["/w", "/whisper", "/omoggle", "/privatevc", "/mute", "/unmute", "/admin", "/unadmin", "/owner", "/unowner", "/subscription", "/deleteuser", "/ban", "/unban", "/permaban", "/kick", "/warn"];
+    const targetAutocompleteCommands = ["/w", "/whisper", "/omoggle", "/privatevc", "/mute", "/unmute", "/admin", "/unadmin", "/owner", "/unowner", "/subscription", "/deleteuser", "/ban", "/unban", "/permaban", "/kick", "/warn", "/userinfo"];
 
     if (targetAutocompleteCommands.includes(baseCommandContext)) {
       let isTargetingPhase = true;
 
-      if (["/mute", "/unmute", "/admin", "/unadmin", "/owner", "/unowner", "/subscription", "/deleteuser", "/ban", "/unban", "/permaban", "/kick", "/warn"].includes(baseCommandContext) && currentWordIdx > 1) {
+      if (["/mute", "/unmute", "/admin", "/unadmin", "/owner", "/unowner", "/subscription", "/deleteuser", "/ban", "/unban", "/permaban", "/kick", "/warn", "/userinfo"].includes(baseCommandContext) && currentWordIdx > 1) {
         isTargetingPhase = false;
       } else {
         for (let i = 1; i < currentWordIdx; i++) {
