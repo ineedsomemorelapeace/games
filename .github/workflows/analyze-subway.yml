@@ -1,0 +1,104 @@
+name: Analyze Subway Surfers WebGL IL2CPP
+
+on:
+  push:
+    paths:
+      - 'play/subwaysurferssf/**'
+      - '.github/workflows/analyze-subway.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build files
+        run: |
+          mkdir -p /tmp/sssf
+          curl -L --fail --retry 3 "https://raw.githubusercontent.com/ineedsomemorelapeace/games/main/play/subwaysurferssf/Build/SanFrancisco.wasm.code.unityweb" -o /tmp/sssf/code
+          curl -L --fail --retry 3 "https://raw.githubusercontent.com/ineedsomemorelapeace/games/main/play/subwaysurferssf/Build/SanFrancisco.data.unityweb" -o /tmp/sssf/data
+          file /tmp/sssf/code /tmp/sssf/data
+
+      - name: Decompress Unity build files
+        run: |
+          python3 - <<'PY'
+          import gzip, pathlib, subprocess, shutil
+          for name in ("code","data"):
+              p=pathlib.Path("/tmp/sssf")/name
+              b=p.read_bytes()
+              if b[:2] == b"\\x1f\\x8b":
+                  p.with_suffix(".raw").write_bytes(gzip.decompress(b))
+              elif b[:4] == b"\\xce\\xb2\\xcf\\x81":
+                  subprocess.run(["brotli","-d",str(p),"-o",str(p)+".raw"],check=True)
+              else:
+                  shutil.copyfile(p,str(p)+".raw")
+          PY
+
+      - name: Extract global-metadata.dat
+        run: |
+          python3 - <<'PY'
+          import pathlib, struct
+          b=pathlib.Path('/tmp/sssf/data.raw').read_bytes()
+          magic=b'\\xaf\\x1b\\xb1\\xfa'
+          found=[]
+          pos=0
+          while True:
+              pos=b.find(magic,pos)
+              if pos<0: break
+              if pos+8 <= len(b):
+                  ver=struct.unpack_from('<I',b,pos+4)[0]
+                  if 16 <= ver <= 40:
+                      vals=[]
+                      ok=True
+                      for i in range(35):
+                          o=pos+8+i*8
+                          if o+8>len(b): ok=False; break
+                          off,cnt=struct.unpack_from('<II',b,o)
+                          vals.append((off,cnt))
+                      if ok:
+                          end=max((off+cnt for off,cnt in vals),default=0)
+                          if end and pos+end <= len(b):
+                              found.append((pos,ver,end))
+              pos+=4
+          if not found:
+              raise SystemExit("global-metadata.dat not found in Unity data")
+          pos,ver,end=max(found,key=lambda x:x[2])
+          pathlib.Path('/tmp/sssf/global-metadata.dat').write_bytes(b[pos:pos+end])
+          print("metadata",pos,ver,end)
+          PY
+
+      - name: Build Il2CppDumper
+        run: |
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper.sln -c Release -o /tmp/dumper
+
+      - name: Dump IL2CPP metadata
+        run: |
+          mkdir -p /tmp/dump
+          printf '\n' | dotnet /tmp/dumper/Il2CppDumper.dll /tmp/sssf/code.raw /tmp/sssf/global-metadata.dat /tmp/dump || true
+          find /tmp/dump -maxdepth 2 -type f | sort | head -100
+          test -f /tmp/dump/dump.cs && cp /tmp/dump/dump.cs /tmp/dump.cs || true
+
+      - name: Search gameplay classes and methods
+        run: |
+          {
+            echo '# Subway Surfers San Francisco IL2CPP analysis'
+            echo
+            echo '## Candidate gameplay symbols'
+            grep -Ein 'speed|accelerat|velocity|player|runner|character|collision|obstacle|death|die|gameover|boost|powerup|hoverboard|train' /tmp/dump/dump.cs | head -500 || true
+          } > /tmp/analysis.md
+          cat /tmp/analysis.md
+
+      - name: Commit analysis report
+        run: |
+          mkdir -p tools
+          cp /tmp/analysis.md tools/subwaysurferssf-il2cpp-analysis.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/subwaysurferssf-il2cpp-analysis.md
+          git diff --cached --quiet || git commit -m "Analyze Subway Surfers WebGL gameplay code"
+          git push
