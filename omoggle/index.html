@@ -281,13 +281,6 @@
     let peer = null;
     let myPeerId = null;
     let currentConnection = null;
-    let currentMediaCall = null;
-    let pendingIncomingCall = null;
-    let remoteMediaStream = null;
-    let connectionTimeout = null;
-    let connectionGeneration = 0;
-    let isCleaningUp = false;
-    let authUserId = null;
     let isHost = false;
     let activeQueueDocRef = null;
     let queueChannel = null;
@@ -299,15 +292,6 @@
     let currentScore = 50;
     let currentUserProfile = { id: null, username: "Unknown" };
     const MAX_AURA = 1000;
-    const QUEUE_MAX_AGE_MS = 2 * 60 * 1000;
-
-    function clearRemoteMediaStream() {
-      if (remoteMediaStream) {
-        remoteMediaStream.getTracks().forEach(track => track.stop());
-        remoteMediaStream = null;
-      }
-      if (opponentVideo) opponentVideo.srcObject = null;
-    }
 
     function safelyStopCameraTracks() {
       if (myMediaStream) {
@@ -318,7 +302,7 @@
         myMediaStream = null;
       }
       if (userVideo) userVideo.srcObject = null;
-      clearRemoteMediaStream();
+      if (opponentVideo) opponentVideo.srcObject = null;
       micEnabled = true;
       remoteAudioEnabled = true;
       updateVoiceButtons();
@@ -368,10 +352,6 @@
 
     async function safeAcquireCameraStream() {
       if (myMediaStream) return true;
-      if (!navigator.mediaDevices?.getUserMedia) {
-        console.error("Camera API is unavailable.");
-        return false;
-      }
       try {
         myMediaStream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
@@ -382,23 +362,6 @@
           }
         });
         userVideo.srcObject = myMediaStream;
-        if (pendingIncomingCall) {
-          const incomingCall = pendingIncomingCall;
-          pendingIncomingCall = null;
-          incomingCall.answer(myMediaStream);
-          currentMediaCall = incomingCall;
-          incomingCall.on('stream', (remoteStream) => {
-            clearRemoteMediaStream();
-            remoteMediaStream = remoteStream;
-            opponentVideo.srcObject = remoteStream;
-            opponentVideo.muted = !remoteAudioEnabled;
-            enableRemoteAudio();
-          });
-          incomingCall.on('close', () => {
-            if (currentMediaCall === incomingCall) currentMediaCall = null;
-            clearRemoteMediaStream();
-          });
-        }
         return true;
       } catch (e) {
         console.error("Camera acquisition failure:", e);
@@ -408,10 +371,6 @@
 
     async function initPeerSession() {
       if (peer && !peer.destroyed) return;
-      if (typeof Peer === 'undefined') {
-        lobbyMsg.innerText = "Voice chat system failed to initialize.";
-        return;
-      }
 
       if (privateRoomId && privateRole === "host") {
         myPeerId = privateRoomId;
@@ -432,28 +391,11 @@
       });
 
       peer.on('call', (incomingCall) => {
-        if (currentMediaCall && currentMediaCall !== incomingCall) {
-          incomingCall.close();
-          return;
-        }
-        if (pendingIncomingCall && pendingIncomingCall !== incomingCall) {
-          incomingCall.close();
-          return;
-        }
         if (myMediaStream) {
           incomingCall.answer(myMediaStream);
-          currentMediaCall = incomingCall;
-          incomingCall.on('stream', (remoteStream) => {
-            clearRemoteMediaStream();
-            remoteMediaStream = remoteStream;
-            opponentVideo.srcObject = remoteStream;
-          });
-          incomingCall.on('close', () => {
-            if (currentMediaCall === incomingCall) currentMediaCall = null;
-            clearRemoteMediaStream();
-          });
+          incomingCall.on('stream', (remoteStream) => { opponentVideo.srcObject = remoteStream; });
         } else {
-          pendingIncomingCall = incomingCall;
+          incomingCall.answer();
         }
       });
 
@@ -461,9 +403,6 @@
         console.error("PeerJS Error:", err);
         if (err.type === 'unavailable-id') {
           lobbyMsg.innerText = "Room ID already in use. Please try another.";
-        }
-        if (err.type === 'peer-unavailable' || err.type === 'network') {
-          cancelSearch();
         }
       });
     }
@@ -519,15 +458,10 @@
     supabase.auth.onAuthStateChange(async (event, session) => {
       const user = session?.user || null;
       if (!user) {
-        authUserId = null;
-        await cancelSearch();
-        if (peer && !peer.destroyed) peer.destroy();
         authButtonContainer.innerHTML = '<a href="../login/" class="nav-auth-btn">Sign In</a>';
         authButtonContainer.style.display = '';
         return;
       }
-      if (authUserId === user.id) return;
-      authUserId = user.id;
       await renderAuthState(user);
     });
 
@@ -572,7 +506,6 @@
           .select("*")
           .eq("status", "waiting")
           .neq("hostuid", currentUserProfile.id)
-          .gte("createdat", Date.now() - QUEUE_MAX_AGE_MS)
           .limit(5);
 
         let selectedDoc = queueItems?.[0];
@@ -654,78 +587,43 @@
       inQueueProcess = false;
     }
 
-    async function cancelSearch({ redirect = false, unload = false } = {}) {
-      if (isCleaningUp) return;
-      isCleaningUp = true;
-      connectionGeneration += 1;
+    async function cancelSearch() {
       if (queueChannel) {
         supabase.removeChannel(queueChannel);
         queueChannel = null;
       }
-      const queueIdToDelete = isHost ? activeQueueDocRef : null;
-      activeQueueDocRef = null;
+      if (isHost && activeQueueDocRef) {
+        await supabase.from("showdown_queue").delete().eq("id", activeQueueDocRef);
+        activeQueueDocRef = null;
+      }
       if (currentConnection) {
-        try { currentConnection.close(); } catch (error) { console.warn("Failed to close data connection:", error); }
+        currentConnection.close();
         currentConnection = null;
       }
-      if (currentMediaCall) {
-        try { currentMediaCall.close(); } catch (error) { console.warn("Failed to close media call:", error); }
-        currentMediaCall = null;
-      }
-      if (pendingIncomingCall) {
-        try { pendingIncomingCall.close(); } catch (error) { console.warn("Failed to close pending media call:", error); }
-        pendingIncomingCall = null;
-      }
-      clearRemoteMediaStream();
-      if (connectionTimeout) {
-        clearTimeout(connectionTimeout);
-        connectionTimeout = null;
-      }
       safelyStopCameraTracks();
-
-      if (queueIdToDelete) {
-        await supabase.from("showdown_queue").delete().eq("id", queueIdToDelete);
-      }
-      if (redirect) window.location.href = privateRoomId ? "../chat/" : "#";
-      else if (!unload) switchStage(stageLobby);
-      isCleaningUp = false;
+      switchStage(stageLobby);
     }
 
     function setupDataChannel(conn) {
-      if (!conn || (currentConnection && currentConnection !== conn)) {
-        if (conn) conn.close();
-        return;
-      }
-
       currentConnection = conn;
-      const thisGeneration = ++connectionGeneration;
 
-      connectionTimeout = setTimeout(() => {
-        if (thisGeneration === connectionGeneration && !currentConnection?.open) {
+      let connectionTimeout = setTimeout(() => {
+        if (!currentConnection?.open) {
           console.warn("P2P Connection timeout");
           cancelSearch();
         }
       }, 15000);
 
       currentConnection.on('open', () => {
-        if (thisGeneration !== connectionGeneration || currentConnection !== conn) return;
         clearTimeout(connectionTimeout);
-        connectionTimeout = null;
         currentConnection.send({ type: 'init_name', username: currentUserProfile.username });
 
         if (!isHost && myMediaStream) {
           const call = peer.call(conn.peer, myMediaStream);
-          currentMediaCall = call;
           call.on('stream', (stream) => {
-            clearRemoteMediaStream();
-            remoteMediaStream = stream;
             opponentVideo.srcObject = stream;
             opponentVideo.muted = !remoteAudioEnabled;
             enableRemoteAudio();
-          });
-          call.on('close', () => {
-            if (currentMediaCall === call) currentMediaCall = null;
-            clearRemoteMediaStream();
           });
         }
         runShowdownEngine();
@@ -742,14 +640,14 @@
       });
 
       currentConnection.on('close', () => {
-        if (thisGeneration !== connectionGeneration) return;
         clearLoops();
-        cancelSearch();
+        safelyStopCameraTracks();
+        switchStage(stageLobby);
       });
 
       currentConnection.on('error', (err) => {
         console.error("Data channel error:", err);
-        if (thisGeneration === connectionGeneration) cancelSearch();
+        cancelSearch();
       });
     }
 
@@ -816,18 +714,15 @@
       resultText.style.color = finalPosition < 48 ? "var(--accent)" : finalPosition > 52 ? "#ef4444" : "var(--text-muted)";
     }
 
-    function clearLoops() {
-      clearInterval(timerInterval);
-      clearInterval(matchInterval);
-      timerInterval = null;
-      matchInterval = null;
-    }
+    function clearLoops() { clearInterval(timerInterval); clearInterval(matchInterval); }
 
-    async function cleanExit() {
-      await cancelSearch({ redirect: true });
-      if (peer && !peer.destroyed) {
-        try { peer.destroy(); } catch (error) { console.warn("Failed to destroy PeerJS:", error); }
-      }
+    function cleanExit() {
+      if (currentConnection) currentConnection.close();
+      if (peer && !peer.destroyed) peer.destroy();
+      clearLoops();
+      safelyStopCameraTracks();
+      window.location.href = privateRoomId ? "../chat/" : "#";
+      switchStage(stageLobby);
     }
 
     btnStart.addEventListener('click', startMatchmaking);
@@ -842,10 +737,10 @@
     });
     btnExit.addEventListener('click', cleanExit);
 
-    window.addEventListener('pagehide', () => {
-      void cancelSearch({ unload: true });
+    window.addEventListener('beforeunload', () => {
+      safelyStopCameraTracks();
       if (peer && !peer.destroyed) peer.destroy();
-    }, { once: true });
+    });
   </script>
 </body>
 </html>
