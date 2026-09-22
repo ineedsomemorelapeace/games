@@ -1211,15 +1211,13 @@ function handleBannedUserDisplay() {
 
 async function loadAndCacheAllUsers() {
   try {
-    const { data: usersData } = await supabase.from("users").select("id, username, email, role, rank, createdAt");
+    const { data: usersData } = await supabase.from("users").select("id, username, role, rank");
     if (usersData) {
       allRegisteredUsers = usersData.map(u => ({
         id: u.id,
         username: u.username || "User",
-        email: u.email || "N/A",
         role: u.role || "user",
         rank: u.rank || "none",
-        createdAt: u.createdAt || 0,
         avatar: u.username ? u.username[0].toUpperCase() : "U"
       }));
       localUsersCache = allRegisteredUsers;
@@ -1231,6 +1229,22 @@ async function loadAndCacheAllUsers() {
 
 async function loadAvatarIndex() {
   avatarIndexByUserId = new Map();
+
+  // Cache the small avatar filename index for this browser session. This avoids
+  // repeatedly listing the entire Storage folder while preserving the existing
+  // avatar behavior and URLs. The actual image bytes are still handled by the
+  // browser/Storage cache.
+  const cacheKey = "carsongames-avatar-index-v2";
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) {
+        avatarIndexByUserId = new Map(parsed);
+        return;
+      }
+    }
+  } catch (_) {}
 
   try {
     const { data, error } = await supabase.storage.from("chat-files").list("avatars", {
@@ -1252,14 +1266,14 @@ async function loadAvatarIndex() {
       const existing = latestByUser.get(userId);
 
       if (!existing || timestamp > existing.timestamp) {
-        latestByUser.set(userId, {
-          fileName: item.name,
-          timestamp
-        });
+        latestByUser.set(userId, { fileName: item.name, timestamp });
       }
     });
 
     avatarIndexByUserId = latestByUser;
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify([...latestByUser.entries()]));
+    } catch (_) {}
   } catch (err) {
     console.error("Failed to load avatar storage index:", err);
     avatarIndexByUserId = new Map();
@@ -1280,6 +1294,29 @@ function showLocalSystemMessage(text, isError = false) {
     timestamp: new Date().toISOString()
   });
   renderMessages(true);
+}
+
+async function logModeratorEvent(text) {
+  if (!currentUser || (currentUserRole !== "admin" && currentUserRole !== "owner")) return;
+
+  const moderatorIds = allRegisteredUsers
+    .filter(u => u.role === "admin" || u.role === "owner")
+    .map(u => u.id)
+    .filter(Boolean);
+
+  if (!moderatorIds.includes(currentUser.id)) moderatorIds.push(currentUser.id);
+  if (moderatorIds.length === 0) return;
+
+  const { error } = await supabase.from("whispers").insert([{
+    text,
+    username: "Server",
+    senderId: currentUser.id,
+    participants: [...new Set(moderatorIds)],
+    type: "mod_log",
+    role: "system"
+  }]);
+
+  if (error) console.warn("Moderator log write failed:", error);
 }
 
 function updateAuthButtonState(isLoggedIn) {
@@ -2246,7 +2283,7 @@ async function startChat(user) {
         startCooldownTimer(currentUserMutedUntil);
       }
     }
-  }, 3000);
+  }, 30000);
 
   if (uploadBtn && fileInput) {
     uploadBtn.onclick = () => fileInput.click();
@@ -2477,6 +2514,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ "mutedUntil": Date.now() + durationMs }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to mute user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Muted user @${targetUser.username} for ${durationStr}.`, false);
+        await logModeratorEvent(`@${currentUsername} used /mute on @${targetUser.username} for ${durationStr}.`);
         return;
       }
 
@@ -2486,6 +2524,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ "mutedUntil": 0 }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to unmute user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Unmuted user @${targetUser.username}.`, false);
+        await logModeratorEvent(`@${currentUsername} used /unmute on @${targetUser.username}.`);
         return;
       }
 
@@ -2532,6 +2571,7 @@ async function startChat(user) {
         // This is deliberately a local system message: it is never inserted into
         // messages/whispers, so other chat users cannot see the result.
         showLocalSystemMessage(`User info for @${userRow.username || targetUser.username}: ${fields.join(" | ")}`, false);
+        await logModeratorEvent(`@${currentUsername} used /userinfo on @${userRow.username || targetUser.username}.`);
         return;
       }
 
@@ -2552,6 +2592,7 @@ async function startChat(user) {
 
         if (error) { showLocalSystemMessage(`Failed to ban user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Successfully banned @${targetUser.username} for ${durationStr}. Reason: ${reason}`, false);
+        await logModeratorEvent(`@${currentUsername} banned @${targetUser.username} for ${durationStr}. Reason: ${reason}`);
         return;
       }
 
@@ -2561,6 +2602,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ "bannedUntil": 0, "banReason": null }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to unban user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Lifted ban from user @${targetUser.username}.`, false);
+        await logModeratorEvent(`@${currentUsername} used /unban on @${targetUser.username}.`);
         return;
       }
 
@@ -2575,6 +2617,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ "bannedUntil": permaTimestamp, "banReason": reason }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to permaban user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Permanently banned @${targetUser.username}. Reason: ${reason}`, false);
+        await logModeratorEvent(`@${currentUsername} permanently banned @${targetUser.username}. Reason: ${reason}`);
         return;
       }
 
@@ -2589,6 +2632,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ "bannedUntil": kickTimestamp, "banReason": reason }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to kick user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Kicked user @${targetUser.username} for 2 minutes. Reason: ${reason}`, false);
+        await logModeratorEvent(`@${currentUsername} kicked @${targetUser.username} for 2 minutes. Reason: ${reason}`);
         return;
       }
 
@@ -2598,6 +2642,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ role: "admin" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to promote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Promoted @${targetUser.username} to Admin.`, false);
+        await logModeratorEvent(`@${currentUsername} promoted @${targetUser.username} to Admin.`);
         return;
       }
 
@@ -2607,6 +2652,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ role: "user" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to demote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Demoted @${targetUser.username} to standard User level.`, false);
+        await logModeratorEvent(`@${currentUsername} demoted @${targetUser.username} to User.`);
         return;
       }
 
@@ -2616,6 +2662,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ role: "owner" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to promote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Promoted @${targetUser.username} to Owner privileges.`, false);
+        await logModeratorEvent(`@${currentUsername} promoted @${targetUser.username} to Owner.`);
         return;
       }
 
@@ -2625,6 +2672,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ role: "admin" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to demote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Demoted @${targetUser.username} to Admin.`, false);
+        await logModeratorEvent(`@${currentUsername} demoted @${targetUser.username} to Admin.`);
         return;
       }
 
@@ -2635,6 +2683,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").update({ rank: chosenRank }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to update subscription: ${error.message}`, true); return; }
         showLocalSystemMessage(`Updated subscription parameters for @${targetUser.username} to [${chosenRank}].`, false);
+        await logModeratorEvent(`@${currentUsername} changed @${targetUser.username}'s subscription rank to ${chosenRank}.`);
         await loadAndCacheAllUsers();
         return;
       }
@@ -2645,6 +2694,7 @@ async function startChat(user) {
         const { error } = await supabase.from("users").delete().eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to delete user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Purged user database records for user identity: @${targetUser.username}.`, false);
+        await logModeratorEvent(`@${currentUsername} used /deleteuser on @${targetUser.username}.`);
         await loadAndCacheAllUsers();
         return;
       }
@@ -2653,6 +2703,7 @@ async function startChat(user) {
         await supabase.from("messages").delete().not('id', 'is', null);
         await supabase.from("whispers").delete().not('id', 'is', null);
         showLocalSystemMessage("Database messages and whispers wiped.", false);
+        await logModeratorEvent(`@${currentUsername} used /deleteall.`);
         return;
       }
 
@@ -2687,6 +2738,7 @@ async function startChat(user) {
         }]);
         
         showLocalSystemMessage(`Issued warning ${warnCount} to @${targetUser.username}.`, false);
+        await logModeratorEvent(`@${currentUsername} warned @${targetUser.username}: ${reason}`);
         return;
       }
 
@@ -2842,7 +2894,7 @@ function updateAutocompleteCacheFromLoadedMessages() {
 async function listenForNewMessages(user) {
   const { data: initialPublic } = await supabase
     .from("messages")
-    .select("*")
+    .select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId")
     .order("timestamp", { ascending: false })
     .range(0, MESSAGE_PAGE_SIZE - 1);
 
@@ -2856,11 +2908,11 @@ async function listenForNewMessages(user) {
 
   const { data: initialPrivate } = await supabase
     .from("whispers")
-    .select("*")
+    .select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId")
     .contains("participants", [user.id]);
 
   if (initialPrivate) {
-    dbPrivateMessages = initialPrivate.map(m => ({ ...m, isWhisper: true, isSystemMessage: m.isOmoggleInvite === true }));
+    dbPrivateMessages = initialPrivate.map(m => ({ ...m, isWhisper: true, isSystemMessage: m.role === "system" || m.isOmoggleInvite === true }));
     renderMessages();
   }
 
@@ -2942,7 +2994,7 @@ async function jumpToMessage(collection, messageId) {
   let target = document.querySelector(selector(messageId));
   if (!target) {
     try {
-      const { data, error } = await supabase.from(collection).select("*").eq("id", messageId).maybeSingle();
+      const { data, error } = await supabase.from(collection).select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId").eq("id", messageId).maybeSingle();
       if (!error && data) {
         const normalized = {
           ...data,
@@ -3059,6 +3111,10 @@ function renderMessages(forceScrollDown = false) {
   const hasRegularMessages = regularMessages.some(msg => !msg.isSystemMessage) || localPendingQueue.some(msg => !msg.isSystemMessage);
   const visibleEphemeralMessages = hasRegularMessages ? [] : ephemeralSystemMessages;
   let allMessages = [...visibleEphemeralMessages, ...regularMessages];
+
+  if (currentUserRole !== "admin" && currentUserRole !== "owner") {
+    allMessages = allMessages.filter(msg => msg.type !== "mod_log");
+  }
 
   const seenIds = new Set();
   allMessages = allMessages.filter(msg => {
@@ -3343,7 +3399,7 @@ function displayMessage(scroller, msgData) {
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
       try {
-        const { data: record } = await supabase.from(dataCollectionTargetStr).select("*").eq("id", msgData.id).single();
+        const { data: record } = await supabase.from(dataCollectionTargetStr).select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId").eq("id", msgData.id).single();
         if (record) {
           lastActionLog = { type: "delete", collection: dataCollectionTargetStr, id: msgData.id, data: record };
         }
@@ -3683,6 +3739,8 @@ function getGradient(username) {
 }
 
 const avatarUrlCache = new Map();
+const avatarBlobUrlCache = new Map();
+const AVATAR_CACHE_NAME = "carsongames-avatar-cache-v1";
 
 function loadAvatarImageForUser(userId) {
   if (!userId) return null;
@@ -3698,6 +3756,36 @@ function loadAvatarImageForUser(userId) {
 
   avatarUrlCache.set(userId, publicUrl);
   return publicUrl;
+}
+
+async function getCachedAvatarUrl(publicUrl) {
+  if (!publicUrl) return null;
+  const existing = avatarBlobUrlCache.get(publicUrl);
+  if (existing) return existing;
+
+  // Cache API keeps small avatars locally across page loads. Because avatar
+  // filenames already include a timestamp, a changed avatar naturally gets
+  // a new cache key without needing cache invalidation logic.
+  if (!window.caches || !window.fetch) return publicUrl;
+
+  try {
+    const cache = await caches.open(AVATAR_CACHE_NAME);
+    const cachedResponse = await cache.match(publicUrl);
+    let response = cachedResponse;
+
+    if (!response) {
+      response = await fetch(publicUrl, { mode: "cors", credentials: "omit", cache: "force-cache" });
+      if (!response.ok) return publicUrl;
+      try { await cache.put(publicUrl, response.clone()); } catch (_) {}
+    }
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    avatarBlobUrlCache.set(publicUrl, blobUrl);
+    return blobUrl;
+  } catch (_) {
+    return publicUrl;
+  }
 }
 
 function decorateAvatarElement(element, userId, username, fallbackText) {
@@ -3720,17 +3808,24 @@ function decorateAvatarElement(element, userId, username, fallbackText) {
     return;
   }
 
-  const image = document.createElement("img");
-  image.alt = "Profile picture";
-  image.loading = "lazy";
-  image.decoding = "async";
-  image.src = publicUrl;
-  image.onerror = () => {
+  element.style.background = `linear-gradient(135deg, ${gradient})`;
+  element.textContent = fallbackText;
+
+  getCachedAvatarUrl(publicUrl).then(cachedUrl => {
+    if (!element.isConnected || !cachedUrl) return;
+    const image = document.createElement("img");
+    image.alt = "Profile picture";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.src = cachedUrl;
+    image.onerror = () => {
+      element.innerHTML = "";
+      element.style.background = `linear-gradient(135deg, ${gradient})`;
+      element.textContent = fallbackText;
+    };
     element.innerHTML = "";
-    element.style.background = `linear-gradient(135deg, ${gradient})`;
-    element.textContent = fallbackText;
-  };
-  element.appendChild(image);
+    element.appendChild(image);
+  });
 }
 
 function escapeHtml(text) {
