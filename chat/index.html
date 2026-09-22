@@ -1054,10 +1054,11 @@ function parseDurationString(str) {
 setTimeout(() => {
   if (currentUser && !initialSnapshotReceived) {
     if (currentUserBannedUntil && Date.now() < currentUserBannedUntil) return;
-    console.warn("Failsafe triggered: Chat channel frozen. Forcing reload...");
-    window.location.reload();
+    // Do not reload the entire page for a slow/temporarily unavailable
+    // Supabase request. Reloading here caused an endless retry loop.
+    console.warn("Chat initial snapshot is taking longer than expected; keeping the page alive.");
   }
-}, 2000);
+}, 10000);
 
 /* AUTH CHECK & SYNC USER ROLES / MUTE STATE */
 supabase.auth.onAuthStateChange(async (event, session) => {
@@ -2892,13 +2893,37 @@ function updateAutocompleteCacheFromLoadedMessages() {
 }
 
 async function listenForNewMessages(user) {
-  const { data: initialPublic } = await supabase
+  let initialPublic = null;
+  let publicLoadError = null;
+
+  const publicQuery = supabase
     .from("messages")
     .select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId")
     .order("timestamp", { ascending: false })
     .range(0, MESSAGE_PAGE_SIZE - 1);
 
-  if (initialPublic) {
+  ({ data: initialPublic, error: publicLoadError } = await publicQuery);
+
+  // Keep the bandwidth-optimized column list, but fall back to the original
+  // full-row query if a schema mismatch ever occurs. This prevents a single
+  // missing/renamed column from making the chat appear to endlessly reload.
+  if (publicLoadError) {
+    console.warn("Optimized message query failed; retrying with full rows:", publicLoadError);
+    const fallback = await supabase
+      .from("messages")
+      .select("*")
+      .order("timestamp", { ascending: false })
+      .range(0, MESSAGE_PAGE_SIZE - 1);
+    initialPublic = fallback.data || null;
+    publicLoadError = fallback.error || null;
+  }
+
+  if (publicLoadError) {
+    console.error("Failed to load chat messages:", publicLoadError);
+    // Mark the initial attempt as completed so the failsafe cannot reload the
+    // entire page in a loop. The realtime subscription below can still connect.
+    initialSnapshotReceived = true;
+  } else if (initialPublic) {
     dbPublicMessages = initialPublic.map(m => ({ ...m, isWhisper: false, isSystemMessage: m.role === "system" })).reverse();
     initialSnapshotReceived = true;
     if (initialPublic.length < MESSAGE_PAGE_SIZE) allMessagesLoaded = true;
