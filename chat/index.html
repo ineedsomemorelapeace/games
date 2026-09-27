@@ -595,6 +595,10 @@
 
     .badge-admin { color: #3b82f6; font-size: 0.72rem; background: rgba(59,130,246,0.12); padding: 2px 6px; border-radius: 99px; font-weight: 700; border: 1px solid rgba(59,130,246,0.2); text-transform: uppercase; margin-left: 4px; -webkit-text-fill-color: currentColor; }
     .badge-owner { color: #f59e0b; font-size: 0.72rem; background: rgba(245,158,11,0.12); padding: 2px 6px; border-radius: 99px; font-weight: 700; border: 1px solid rgba(245,158,11,0.2); text-transform: uppercase; margin-left: 4px; -webkit-text-fill-color: currentColor; }
+    .profile-tag { font-size: 0.7rem; padding: 2px 7px; border-radius: 99px; font-weight: 700; border: 1px solid currentColor; margin-left: 4px; -webkit-text-fill-color: currentColor; }
+    .grade-6th { color: #86efac; background: rgba(134,239,172,0.12); }
+    .grade-7th { color: #f87171; background: rgba(248,113,113,0.12); }
+    .grade-8th { color: #60a5fa; background: rgba(96,165,250,0.12); }
 
     .duel-card { background: var(--surface); border: 1px solid rgba(108, 99, 255, 0.2); border-radius: var(--radius-m); padding: 1rem; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.75rem; max-width: 440px; }
     .duel-card-msg { font-size: 0.95rem; color: #cbd5e1; font-weight: 600; -webkit-text-fill-color: currentColor; }
@@ -900,10 +904,19 @@ function updateLayoutDimensions() {
 }
 
 const EX_COMMANDS = [
+  { name: "/help", desc: "Show commands available to you {/help}" },
+  { name: "/ping", desc: "Check chat responsiveness {/ping}" },
+  { name: "/who", desc: "List users currently known to chat {/who}" },
+  { name: "/grade", desc: "Set your grade tag {/grade 6th/7th/8th}" },
+  { name: "/tag", desc: "Manage custom tags {/tag give @user crazy red}" },
+  { name: "/tags", desc: "View a user's tags {/tags @user}" },
   { name: "/admin", desc: "Promote a user to Admin {/admin @user}" },
   { name: "/ban", desc: "Ban a user for a duration {/ban @user time reason}" },
   { name: "/deleteall", desc: "Wipe all chat messages and whispers {/deleteall}" },
   { name: "/deleteuser", desc: "Delete a user from the database {/deleteuser @user}" },
+  { name: "/modlogs", desc: "View recent moderator audit events {/modlogs}" },
+  { name: "/serverinfo", desc: "View chat server statistics {/serverinfo}" },
+  { name: "/announce", desc: "Post a server announcement {/announce text}" },
   { name: "/kick", desc: "Kick a user from chat for 2 minutes {/kick @user reason}" },
   { name: "/mute", desc: "Mute a user for a duration {/mute @user time}" },
   { name: "/omoggle", desc: "Send an Omoggle video match challenge {/omoggle @user}" },
@@ -928,6 +941,8 @@ const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platfor
 let currentUser = null;
 let currentUsername = "User";
 let currentUserRole = "user";
+let currentUserGrade = "";
+let currentUserTags = [];
 let currentUserMutedUntil = 0;
 let currentUserBannedUntil = 0;
 let currentUserBanReason = "";
@@ -967,6 +982,30 @@ let publicChannel = null;
 let privateChannel = null;
 let userProfileChannel = null;
 let avatarIndexByUserId = new Map();
+
+const GRADE_TAGS = {
+  "6th": { label: "6th Grade", className: "grade-6th" },
+  "7th": { label: "7th Grade", className: "grade-7th" },
+  "8th": { label: "8th Grade", className: "grade-8th" }
+};
+
+function normalizeProfileTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  return tags.map(tag => {
+    if (typeof tag === "string") return { label: tag, color: "#c084fc" };
+    return { label: String(tag.label || tag.name || "Tag"), color: tag.color || "#c084fc" };
+  }).filter(tag => tag.label).slice(0, 8);
+}
+
+function safeTagColor(color) {
+  return /^#[0-9a-f]{6}$/i.test(String(color || "")) ? color : "#c084fc";
+}
+
+function profileTagsForUser(user) {
+  const tags = normalizeProfileTags(user.tags);
+  if (GRADE_TAGS[user.grade]) tags.push({ label: GRADE_TAGS[user.grade].label, className: GRADE_TAGS[user.grade].className });
+  return tags.slice(0, 9);
+}
 
 /* ── VOICE/VIDEO CHAT STATE ───────────────────────────────── */
 let vcParticipants = new Map();
@@ -1069,6 +1108,8 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     currentUser = null;
     currentUsername = "User";
     currentUserRole = "user";
+    currentUserGrade = "";
+    currentUserTags = [];
     currentUserMutedUntil = 0;
     currentUserBannedUntil = 0;
     currentUserBanReason = "";
@@ -1083,11 +1124,17 @@ supabase.auth.onAuthStateChange(async (event, session) => {
   currentUser = user;
   currentUsername = user.email ? user.email.split("@")[0] : "User";
 
-  const { data: profile, error } = await supabase
+  let { data: profile, error } = await supabase
     .from("users")
-    .select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt")
+    .select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt, grade, tags")
     .eq("id", user.id)
     .single();
+
+  if (error) {
+    const fallbackProfile = await supabase.from("users").select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt").eq("id", user.id).single();
+    profile = fallbackProfile.data;
+    error = fallbackProfile.error;
+  }
 
   if (error || !profile) {
     await supabase.from("users").insert({
@@ -1101,6 +1148,8 @@ supabase.auth.onAuthStateChange(async (event, session) => {
   } else {
     currentUsername = profile.username || currentUsername;
     currentUserRole = profile.role || "user";
+    currentUserGrade = profile.grade || "";
+    currentUserTags = normalizeProfileTags(profile.tags);
     currentUserMutedUntil = profile.mutedUntil || 0;
     currentUserBannedUntil = profile.bannedUntil || 0;
     currentUserBanReason = profile.banReason || "";
@@ -1117,6 +1166,8 @@ supabase.auth.onAuthStateChange(async (event, session) => {
       
       currentUsername = data.username || currentUsername;
       currentUserRole = data.role || "user";
+      currentUserGrade = data.grade || "";
+      currentUserTags = normalizeProfileTags(data.tags);
       currentUserMutedUntil = data.mutedUntil || 0;
       currentUserBannedUntil = data.bannedUntil || 0;
       currentUserBanReason = data.banReason || "";
@@ -1212,13 +1263,19 @@ function handleBannedUserDisplay() {
 
 async function loadAndCacheAllUsers() {
   try {
-    const { data: usersData } = await supabase.from("users").select("id, username, role, rank");
+    let { data: usersData, error } = await supabase.from("users").select("id, username, role, rank, grade, tags");
+    if (error) {
+      const fallbackUsers = await supabase.from("users").select("id, username, role, rank");
+      usersData = fallbackUsers.data;
+    }
     if (usersData) {
       allRegisteredUsers = usersData.map(u => ({
         id: u.id,
         username: u.username || "User",
         role: u.role || "user",
         rank: u.rank || "none",
+        grade: u.grade || "",
+        tags: normalizeProfileTags(u.tags),
         avatar: u.username ? u.username[0].toUpperCase() : "U"
       }));
       localUsersCache = allRegisteredUsers;
@@ -1295,6 +1352,42 @@ function showLocalSystemMessage(text, isError = false) {
     timestamp: new Date().toISOString()
   });
   renderMessages(true);
+}
+
+function showGradePicker(force = false) {
+  if (!currentUser) return Promise.resolve();
+  const storageKey = `carsongames-grade-prompt-${currentUser.id}`;
+  if (!force && localStorage.getItem(storageKey)) return Promise.resolve();
+
+  return new Promise(resolve => {
+    const existing = document.getElementById("grade-picker-overlay");
+    if (existing) existing.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "grade-picker-overlay";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);";
+    overlay.innerHTML = `<div style="width:min(420px,100%);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-l);padding:2rem;box-shadow:0 24px 70px rgba(0,0,0,.5);"><h2 style="font-family:var(--font-display);font-size:1.5rem;color:#fff;margin-bottom:.5rem;">Choose your grade</h2><p style="color:var(--text-muted);margin-bottom:1.25rem;">This adds a small tag to your chat name. You can change it later in Settings.</p><div style="display:grid;gap:.65rem;">${Object.entries(GRADE_TAGS).map(([value, tag]) => `<button type="button" data-grade="${value}" class="btn-primary ${tag.className}" style="color:inherit;background:transparent;border:1px solid currentColor;">${tag.label}</button>`).join("")}</div><div id="grade-picker-msg" class="status-msg"></div></div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelectorAll("[data-grade]").forEach(button => {
+      button.onclick = async () => {
+        const grade = button.dataset.grade;
+        const msg = overlay.querySelector("#grade-picker-msg");
+        button.disabled = true;
+        const { error } = await supabase.from("users").update({ grade }).eq("id", currentUser.id);
+        if (error) {
+          localStorage.setItem(`carsongames-grade-${currentUser.id}`, grade);
+          msg.textContent = "Saved locally. Add the grade column in Supabase to sync it across devices.";
+          msg.className = "status-msg status-error";
+        } else {
+          currentUserGrade = grade;
+        }
+        localStorage.setItem(storageKey, "1");
+        localStorage.setItem(`carsongames-grade-${currentUser.id}`, grade);
+        overlay.remove();
+        renderMessages(true);
+        resolve();
+      };
+    });
+  });
 }
 
 async function logModeratorEvent(text) {
@@ -2243,6 +2336,8 @@ async function startChat(user) {
 
   await loadAndCacheAllUsers();
   await loadAvatarIndex();
+  if (!currentUserGrade) currentUserGrade = localStorage.getItem(`carsongames-grade-${user.id}`) || "";
+  await showGradePicker();
 
   listenForNewMessages(user);
   scroller.addEventListener("scroll", handleScrollPagination);
@@ -2437,6 +2532,109 @@ async function startChat(user) {
           return false;
         }
         return true;
+      }
+
+      if (commandKey === "/help") {
+        const available = EX_COMMANDS.filter(command => {
+          if (["/admin", "/unadmin", "/owner", "/unowner", "/subscription", "/deleteuser"].includes(command.name)) return isOwnerOnly;
+          if (["/ban", "/unban", "/permaban", "/kick", "/mute", "/unmute", "/warn", "/userinfo", "/tag", "/tags", "/modlogs", "/serverinfo", "/deleteall"].includes(command.name)) return isAdminPlus;
+          return true;
+        }).map(command => `${command.name} - ${command.desc}`).join(" | ");
+        showLocalSystemMessage(available, false);
+        return;
+      }
+
+      if (commandKey === "/ping") {
+        showLocalSystemMessage(`Pong. ${Math.max(0, Date.now() - now)}ms client response.`, false);
+        return;
+      }
+
+      if (commandKey === "/who") {
+        showLocalSystemMessage(`Known users: ${localUsersCache.map(user => `@${user.username}`).join(", ") || "none"}`, false);
+        return;
+      }
+
+      if (commandKey === "/grade") {
+        const grade = effectiveSegments[1]?.toLowerCase();
+        if (grade !== "none" && !GRADE_TAGS[grade]) {
+          showLocalSystemMessage("Syntax: /grade 6th, /grade 7th, /grade 8th, or /grade none", true);
+          return;
+        }
+        const savedGrade = grade === "none" ? "" : grade;
+        const { error } = await supabase.from("users").update({ grade: savedGrade }).eq("id", currentUser.id);
+        currentUserGrade = savedGrade;
+        localStorage.setItem(`carsongames-grade-${currentUser.id}`, savedGrade);
+        if (error) showLocalSystemMessage("Grade saved locally. Add the grade column in Supabase to sync it across devices.", true);
+        else showLocalSystemMessage(`Your chat tag is now ${savedGrade ? GRADE_TAGS[savedGrade].label : "off"}.`, false);
+        renderMessages(true);
+        return;
+      }
+
+      if (commandKey === "/tags") {
+        const targetUser = await resolveTargetUser() || { id: currentUser.id, username: currentUsername, grade: currentUserGrade, tags: currentUserTags };
+        const { data: targetProfile } = await supabase.from("users").select("username, grade, tags").eq("id", targetUser.id).maybeSingle();
+        const tags = profileTagsForUser(targetProfile || targetUser);
+        showLocalSystemMessage(`Tags for @${targetProfile?.username || targetUser.username}: ${tags.length ? tags.map(tag => tag.label).join(", ") : "none"}`, false);
+        return;
+      }
+
+      if (commandKey === "/tag" && isAdminPlus) {
+        const action = effectiveSegments[1]?.toLowerCase();
+        const targetUser = await resolveTargetUser();
+        if (!targetUser || !["give", "remove", "clear"].includes(action)) {
+          showLocalSystemMessage("Syntax: /tag give @user tag-name color | /tag remove @user tag-name | /tag clear @user", true);
+          return;
+        }
+        if (!checkRoleHierarchy(targetUser)) return;
+        const { data: targetProfile } = await supabase.from("users").select("tags, grade, username").eq("id", targetUser.id).maybeSingle();
+        let tags = normalizeProfileTags(targetProfile?.tags);
+        if (action === "clear") {
+          tags = [];
+        } else {
+          const label = effectiveSegments[3]?.replace(/^@/, "").slice(0, 24);
+          if (!label) { showLocalSystemMessage("A tag name is required.", true); return; }
+          if (action === "remove") {
+            tags = tags.filter(tag => tag.label.toLowerCase() !== label.toLowerCase());
+          } else {
+            const colorNames = { red: "#f87171", blue: "#60a5fa", green: "#4ade80", yellow: "#facc15", pink: "#f472b6", purple: "#c084fc", white: "#f8fafc" };
+            const color = colorNames[(effectiveSegments[4] || "purple").toLowerCase()] || (effectiveSegments[4] || "#c084fc");
+            tags = [...tags.filter(tag => tag.label.toLowerCase() !== label.toLowerCase()), { label, color }].slice(-8);
+          }
+        }
+        const { error } = await supabase.from("users").update({ tags }).eq("id", targetUser.id);
+        if (error) { showLocalSystemMessage(`Failed to update @${targetUser.username}'s tags: ${error.message}`, true); return; }
+        showLocalSystemMessage(`Updated tags for @${targetUser.username}.`, false);
+        await logModeratorEvent(`@${currentUsername} used /tag ${action} on @${targetUser.username}.`);
+        await loadAndCacheAllUsers();
+        renderMessages(true);
+        return;
+      }
+
+      if (commandKey === "/modlogs" && isAdminPlus) {
+        const { data: logs, error } = await supabase.from("whispers").select("text, timestamp").eq("type", "mod_log").order("timestamp", { ascending: false }).limit(20);
+        if (error) { showLocalSystemMessage(`Failed to load moderator logs: ${error.message}`, true); return; }
+        showLocalSystemMessage(logs?.length ? logs.map(log => `${new Date(log.timestamp || Date.now()).toLocaleString()}: ${log.text}`).join(" | ") : "No moderator events recorded.", false);
+        return;
+      }
+
+      if (commandKey === "/serverinfo" && isAdminPlus) {
+        showLocalSystemMessage(`Server info: ${allRegisteredUsers.length} cached users, ${dbPublicMessages.length} loaded public messages, ${dbPrivateMessages.length} loaded private messages.`, false);
+        return;
+      }
+
+      if (commandKey === "/announce" && isOwnerOnly) {
+        const announcement = effectiveSegments.slice(1).join(" ").trim();
+        if (!announcement) { showLocalSystemMessage("Syntax: /announce message text", true); return; }
+        const { error } = await supabase.from("messages").insert([{
+          text: announcement,
+          username: "Server",
+          userId: null,
+          role: "system",
+          type: "announcement"
+        }]);
+        if (error) { showLocalSystemMessage(`Failed to publish announcement: ${error.message}`, true); return; }
+        await logModeratorEvent(`@${currentUsername} published an announcement.`);
+        return;
       }
 
       if (commandKey === "/publicvc") {
@@ -2805,6 +3003,8 @@ async function startChat(user) {
       inviteStatus: isOmoggleCommand ? "pending" : null,
       isSystemMessage: isOmoggleCommand,
       role: currentUserRole,
+      grade: currentUserGrade,
+      tags: currentUserTags,
       clientSideId: clientSideId
     };
 
@@ -3134,7 +3334,8 @@ function renderMessages(forceScrollDown = false) {
 
   const regularMessages = [...dbHistoricalMessages, ...dbPublicMessages, ...dbPrivateMessages];
   const hasRegularMessages = regularMessages.some(msg => !msg.isSystemMessage) || localPendingQueue.some(msg => !msg.isSystemMessage);
-  const visibleEphemeralMessages = hasRegularMessages ? [] : ephemeralSystemMessages;
+  const canSeeLocalSystemMessages = currentUserRole === "admin" || currentUserRole === "owner";
+  const visibleEphemeralMessages = (hasRegularMessages && !canSeeLocalSystemMessages) ? [] : ephemeralSystemMessages;
   let allMessages = [...visibleEphemeralMessages, ...regularMessages];
 
   if (currentUserRole !== "admin" && currentUserRole !== "owner") {
@@ -3187,6 +3388,15 @@ function displayMessage(scroller, msgData) {
   let statusBadgeHTML = "";
   if (msgData.role === "admin") statusBadgeHTML = `<span class="badge-admin">Admin</span>`;
   if (msgData.role === "owner") statusBadgeHTML = `<span class="badge-owner">Owner</span>`;
+
+  const profile = msgData.userId === currentUser?.id
+    ? { grade: currentUserGrade, tags: currentUserTags }
+    : localUsersCache.find(user => user.id === (msgData.userId || msgData.senderId));
+  const profileTags = profileTagsForUser({
+    grade: msgData.grade || profile?.grade || "",
+    tags: msgData.tags || profile?.tags || []
+  });
+  const profileTagsHTML = profileTags.map(tag => `<span class="profile-tag ${tag.className || ""}" style="${tag.className ? "" : `color:${safeTagColor(tag.color)};background:${safeTagColor(tag.color)}1f;`}">${escapeHtml(tag.label)}</span>`).join("");
 
   const whisperTag = msgData.isWhisper ? `<span style="color: #a855f7; font-size: 0.75rem; margin-left: 8px; background: rgba(168,85,247,0.12); padding: 2px 7px; border-radius: 99px; font-weight: 600; border: 1px solid rgba(168,85,247,0.2);">Whisper</span>` : "";
 
@@ -3330,7 +3540,7 @@ function displayMessage(scroller, msgData) {
         ${replyPreviewHTML}
         ${forwardPreviewHTML}
         <div class="msg-top">
-          <h5>${safeUsername} <span>${time}</span> ${statusBadgeHTML} ${whisperTag}</h5>
+          <h5>${safeUsername} <span>${time}</span> ${statusBadgeHTML} ${profileTagsHTML} ${whisperTag}</h5>
         </div>
         <p>${textContent}</p>
       </div>

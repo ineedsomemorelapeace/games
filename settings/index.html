@@ -588,6 +588,21 @@
           <div id="username-msg" class="status-msg"></div>
         </form>
 
+        <form id="grade-form" class="settings-section" autocomplete="off">
+          <h3>Chat Grade Tag</h3>
+          <div class="form-group">
+            <label for="grade">Grade shown beside your chat name</label>
+            <select id="grade" name="grade" style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:var(--radius-m);padding:.8rem 1rem;color:#fff;font-size:1rem;outline:none;">
+              <option value="">No grade tag</option>
+              <option value="6th">6th Grade</option>
+              <option value="7th">7th Grade</option>
+              <option value="8th">8th Grade</option>
+            </select>
+          </div>
+          <div class="btn-container"><button type="submit" class="btn-primary">Save Grade Tag</button></div>
+          <div id="grade-msg" class="status-msg"></div>
+        </form>
+
         <form id="password-form" class="settings-section" autocomplete="off">
           <h3>Change Password</h3>
           <div class="form-group">
@@ -655,6 +670,8 @@
       `;
 
       const avatarInput = document.getElementById('avatar-input');
+      const gradeInput = document.getElementById('grade');
+      if (gradeInput) gradeInput.value = profile?.grade || localStorage.getItem(`carsongames-grade-${user.id}`) || '';
       const avatarCropStage = document.getElementById('avatar-crop-stage');
       const avatarCropImage = document.getElementById('avatar-crop-image');
       const avatarOutputCanvas = document.getElementById('avatar-output-canvas');
@@ -1100,6 +1117,21 @@
           msgEl.textContent = 'Failed to update username.';
           msgEl.className = 'status-msg status-error';
         }
+      };
+
+      document.getElementById('grade-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const grade = document.getElementById('grade').value;
+        const msgEl = document.getElementById('grade-msg');
+        const { error } = await supabase.from('users').update({ grade }).eq('id', user.id);
+        localStorage.setItem(`carsongames-grade-${user.id}`, grade);
+        if (error) {
+          msgEl.textContent = 'Saved locally. Add the grade column in Supabase to sync it across devices.';
+          msgEl.className = 'status-msg status-error';
+          return;
+        }
+        msgEl.textContent = 'Grade tag updated!';
+        msgEl.className = 'status-msg status-success';
       };
 
       // Password Form Submission
