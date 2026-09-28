@@ -1574,7 +1574,9 @@ function attachStreamToVideo(peerId, stream, isLocal = false) {
   if (videoEl && stream) {
     videoEl.srcObject = stream;
     videoEl.muted = isLocal;
-    videoEl.play().catch(e => console.warn('Video play error:', e));
+    videoEl.play().catch(error => {
+      if (error.name !== 'NotAllowedError') console.warn('Video play error:', error);
+    });
   }
 }
 
@@ -1695,7 +1697,9 @@ function updateGridParticipantLayout(participantsArray) {
     const stream = participant.peerId === vcPeer?.id ? vcLocalStream : vcRemoteStreams.get(participant.peerId);
     if (stream) {
       videoEl.srcObject = stream;
-      videoEl.play().catch(e => console.warn('Video play error:', e));
+      videoEl.play().catch(error => {
+        if (error.name !== 'NotAllowedError') console.warn('Video play error:', error);
+      });
     }
   });
 }
@@ -1798,14 +1802,24 @@ async function joinVoiceRoom(roomId) {
       vcCalls.delete(call.peer);
       return;
     }
-    call.answer(vcLocalStream);
-    handleIncomingCall(call);
+    try {
+      call.answer(vcLocalStream);
+      handleIncomingCall(call);
+    } catch (error) {
+      console.error('Failed to answer voice call:', error);
+      vcCalls.delete(call.peer);
+      try { call.close(); } catch (closeError) { console.warn('Failed to close voice call:', closeError); }
+    }
   });
 
   vcPeer.on('error', (err) => {
     console.error('PeerJS error:', err);
     if (err.type === 'peer-unavailable') {
       console.warn('Peer unavailable:', err);
+      const unavailablePeerId = err.message?.match(/ID "(.+)"/)?.[1];
+      if (unavailablePeerId) removeVCPeer(unavailablePeerId);
+    } else if (err.type === 'network' || err.type === 'socket-error' || err.type === 'socket-closed') {
+      clearVCPeerConnectionsForReconnect();
     }
   });
 
@@ -1993,7 +2007,13 @@ function callPeer(peerId) {
   if (vcCalls.has(peerId)) return;
 
   console.log('Calling peer:', peerId);
-  const call = vcPeer.call(peerId, vcLocalStream);
+  let call;
+  try {
+    call = vcPeer.call(peerId, vcLocalStream);
+  } catch (error) {
+    console.error('Failed to call peer:', error);
+    return;
+  }
   
   if (!call) return;
 
@@ -2049,7 +2069,10 @@ function handleIncomingCall(call) {
   });
 }
 
-function subscribeToVCChannel(roomId) {}
+function subscribeToVCChannel(roomId) {
+  if (!roomId || !vcPeer?.id || !vcActiveRoomId) return Promise.resolve();
+  return broadcastVCPresence(roomId, vcPeer.id);
+}
 
 async function leaveVoiceRoom({ cleanupRoom = true } = {}) {
   vcPresenceGeneration += 1;
@@ -2068,7 +2091,7 @@ async function leaveVoiceRoom({ cleanupRoom = true } = {}) {
         peerId: vcPeer?.id || currentUser?.id,
         timestamp: Date.now()
       }
-    });
+    }).catch(error => console.warn('Failed to broadcast voice leave:', error));
     await removeSupabaseChannel(channel);
   }
 
@@ -3226,7 +3249,7 @@ async function listenForNewMessages(user) {
 async function jumpToMessage(collection, messageId) {
   if (!collection || messageId === null || messageId === undefined) return;
   const selector = (value) => {
-    const escaped = window.CSS && CSS.escape ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, "\\function renderMessages(forceScrollDown = false) {");
+    const escaped = window.CSS && CSS.escape ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
     return `[data-message-collection="${collection}"][data-message-id="${escaped}"]`;
   };
 
@@ -3333,8 +3356,9 @@ function renderMessages(forceScrollDown = false) {
   const scroller = document.getElementById("message-scroller");
   if (!scroller) return;
 
-  const isPinnedToBottom = scroller.scrollHeight - scroller.clientHeight <= scroller.scrollTop + 30;
-  const cachedScrollTop = scroller.scrollTop;
+  const previousScrollHeight = scroller.scrollHeight;
+  const isPinnedToBottom = previousScrollHeight - scroller.clientHeight <= scroller.scrollTop + 30;
+  const distanceFromBottom = previousScrollHeight - scroller.scrollTop;
 
   updateAutocompleteCacheFromLoadedMessages();
   scroller.innerHTML = "";
@@ -3380,10 +3404,10 @@ function renderMessages(forceScrollDown = false) {
   if (isFirstLoad && dbPublicMessages.length > 0) {
     scroller.scrollTop = scroller.scrollHeight;
     isFirstLoad = false;
-  } else if (isPinnedToBottom || forceScrollDown) {
+  } else if (isPinnedToBottom || forceScrollDown && isPinnedToBottom) {
     scroller.scrollTop = scroller.scrollHeight;
   } else {
-    scroller.scrollTop = cachedScrollTop;
+    scroller.scrollTop = Math.max(0, scroller.scrollHeight - distanceFromBottom);
   }
 }
 
