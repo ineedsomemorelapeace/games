@@ -1131,7 +1131,7 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     .single();
 
   if (error) {
-    const fallbackProfile = await supabase.from("users").select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt").eq("id", user.id).single();
+    const fallbackProfile = await supabase.from("users").select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt, grade, tags").eq("id", user.id).single();
     profile = fallbackProfile.data;
     error = fallbackProfile.error;
   }
@@ -1176,6 +1176,8 @@ supabase.auth.onAuthStateChange(async (event, session) => {
       if (cachedUser) {
         cachedUser.username = data.username || cachedUser.username;
         cachedUser.role = data.role || "user";
+        cachedUser.grade = data.grade || "";
+        cachedUser.tags = normalizeProfileTags(data.tags);
       }
 
       if (currentUserBannedUntil && Date.now() < currentUserBannedUntil) {
@@ -1265,7 +1267,7 @@ async function loadAndCacheAllUsers() {
   try {
     let { data: usersData, error } = await supabase.from("users").select("id, username, role, rank, grade, tags");
     if (error) {
-      const fallbackUsers = await supabase.from("users").select("id, username, role, rank");
+      const fallbackUsers = await supabase.from("users").select("id, username, role, rank, grade, tags");
       usersData = fallbackUsers.data;
     }
     if (usersData) {
@@ -2345,13 +2347,21 @@ async function startChat(user) {
   
   chatProfilePollInterval = setInterval(async () => {
     if (!currentUser) return;
-    const { data: profile, error } = await supabase.from("users").select("bannedUntil, mutedUntil, role").eq("id", currentUser.id).single();
+    const { data: profile, error } = await supabase.from("users").select("bannedUntil, mutedUntil, role, grade, tags").eq("id", currentUser.id).single();
     if (profile && !error) {
       const oldBannedUntil = currentUserBannedUntil;
       const oldMutedUntil = currentUserMutedUntil;
       currentUserBannedUntil = profile.bannedUntil || 0;
       currentUserMutedUntil = profile.mutedUntil || 0;
       currentUserRole = profile.role || "user";
+      currentUserGrade = profile.grade || "";
+      currentUserTags = normalizeProfileTags(profile.tags);
+
+      const cachedUser = localUsersCache.find(item => item.id === currentUser.id);
+      if (cachedUser) {
+        cachedUser.grade = currentUserGrade;
+        cachedUser.tags = currentUserTags;
+      }
       
       if (currentUserBannedUntil && Date.now() < currentUserBannedUntil) {
         handleBannedUserDisplay();
@@ -2510,7 +2520,7 @@ async function startChat(user) {
 
         const { data } = await supabase
           .from("users")
-          .select("id, username, role")
+          .select("id, username, role, grade, tags")
           .ilike("username", searchName)
           .maybeSingle();
 
@@ -3075,13 +3085,17 @@ function updateAutocompleteCacheFromLoadedMessages() {
   let allMessages = [...dbHistoricalMessages, ...dbPublicMessages, ...dbPrivateMessages];
   allMessages.forEach(msg => {
     if (msg.userId && msg.username) {
+      const cachedUser = uniqueUsers.get(msg.userId);
       uniqueUsers.set(msg.userId, {
+        ...cachedUser,
         id: msg.userId,
         username: msg.username,
         avatar: msg.avatar || msg.username[0].toUpperCase()
       });
     } else if (msg.senderId && msg.username) {
+      const cachedUser = uniqueUsers.get(msg.senderId);
       uniqueUsers.set(msg.senderId, {
+        ...cachedUser,
         id: msg.senderId,
         username: msg.username,
         avatar: msg.avatar || msg.username[0].toUpperCase()
@@ -3389,12 +3403,14 @@ function displayMessage(scroller, msgData) {
   if (msgData.role === "admin") statusBadgeHTML = `<span class="badge-admin">Admin</span>`;
   if (msgData.role === "owner") statusBadgeHTML = `<span class="badge-owner">Owner</span>`;
 
-  const profile = msgData.userId === currentUser?.id
+  const messageUserId = msgData.userId || msgData.senderId;
+  const isCurrentUserMessage = messageUserId === currentUser?.id;
+  const profile = isCurrentUserMessage
     ? { grade: currentUserGrade, tags: currentUserTags }
-    : localUsersCache.find(user => user.id === (msgData.userId || msgData.senderId));
+    : localUsersCache.find(user => user.id === messageUserId);
   const profileTags = profileTagsForUser({
-    grade: msgData.grade || profile?.grade || "",
-    tags: msgData.tags || profile?.tags || []
+    grade: profile?.grade || "",
+    tags: profile?.tags || []
   });
   const profileTagsHTML = profileTags.map(tag => `<span class="profile-tag ${tag.className || ""}" style="${tag.className ? "" : `color:${safeTagColor(tag.color)};background:${safeTagColor(tag.color)}1f;`}">${escapeHtml(tag.label)}</span>`).join("");
 
