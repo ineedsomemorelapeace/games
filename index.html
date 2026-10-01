@@ -182,11 +182,27 @@
 </head>
 <body>
 
+  <div id="apple-popup" class="announcement-popup" role="dialog" aria-modal="true" aria-labelledby="apple-popup-title">
+    <div class="announcement-popup__panel">
+      <p id="apple-popup-title">TOMORROW BRING JOE YOUR APPLE SLICES FROM LUNCH!</p>
+      <button id="apple-popup-close" class="btn-primary" type="button">OK</button>
+    </div>
+  </div>
+
   <script>
     if ('scrollRestoration' in history) {
       history.scrollRestoration = 'manual';
     }
     window.scrollTo(0, 0);
+  </script>
+
+  <script>
+    const applePopup = document.getElementById('apple-popup');
+    const applePopupClose = document.getElementById('apple-popup-close');
+
+    applePopupClose.addEventListener('click', () => {
+      applePopup.hidden = true;
+    });
   </script>
 
   <header>

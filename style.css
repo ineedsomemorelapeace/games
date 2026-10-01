@@ -56,6 +56,66 @@ body::before {
   z-index: -1;
 }
 
+/* ── HOME ANNOUNCEMENT POPUP ──────────────────────────── */
+.announcement-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.announcement-popup[hidden] {
+  display: none;
+}
+
+.announcement-popup__panel {
+  width: min(92vw, 1100px);
+  height: min(84vh, 760px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3rem;
+  padding: clamp(2rem, 6vw, 6rem);
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-l);
+  box-shadow: 0 0 0 1px var(--accent-glow), 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.announcement-popup__panel p {
+  max-width: 900px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 6vw, 5rem);
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.announcement-popup__panel .btn-primary {
+  min-width: 120px;
+  justify-content: center;
+}
+
+@media (max-width: 600px) {
+  .announcement-popup {
+    padding: 1rem;
+  }
+
+  .announcement-popup__panel {
+    width: 94vw;
+    height: 82vh;
+    gap: 2rem;
+    padding: 1.5rem;
+  }
+}
+
 /* ── DYNAMIC THEME OVERRIDES (Relative paths for GitHub Pages) ────── */
 html.theme-red, body.theme-red {
   --bg: #120407;
