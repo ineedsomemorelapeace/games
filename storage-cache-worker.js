@@ -1,6 +1,6 @@
 const CACHE_NAME = 'carsongames-storage-v2';
-const SUPABASE_STORAGE_HOST = 'hbynnertatvxpvtqctyg.supabase.co';
-const SUPABASE_STORAGE_PREFIX = '/storage/v1/object/public/chat-files/';
+const STORAGE_HOST = self.location.host;
+const STORAGE_PREFIX = '/api/storage/chat-files/';
 const MAX_CACHED_BYTES = 10 * 1024 * 1024;
 
 self.addEventListener('install', (event) => {
@@ -21,7 +21,7 @@ self.addEventListener('fetch', (event) => {
 
   let url;
   try { url = new URL(request.url); } catch { return; }
-  if (url.hostname !== SUPABASE_STORAGE_HOST || !url.pathname.startsWith(SUPABASE_STORAGE_PREFIX)) return;
+  if (url.host !== STORAGE_HOST || !url.pathname.startsWith(STORAGE_PREFIX)) return;
 
   event.respondWith(cacheFirst(request));
 });

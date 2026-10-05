@@ -130,7 +130,7 @@
   </main>
 
   <script type="module">
-    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+    import { createClient } from "../assets/backend-client.js";
 
     let AuraEngine;
     try {
@@ -237,9 +237,7 @@
     };
 
     /* SUPABASE CONFIG */
-    const supabaseUrl = "https://hbynnertatvxpvtqctyg.supabase.co";
-    const supabaseKey = "sb_publishable_WnnU16Mfj1rmRJcEStOzeQ_BExLbP2C";
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient();
 
     const stageLobby = document.getElementById('stage-lobby');
     const stageSearching = document.getElementById('stage-searching');

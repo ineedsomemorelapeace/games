@@ -54,8 +54,8 @@
   };
 
   const originalFetch = window.fetch.bind(window);
-  const STORAGE_HOST = 'hbynnertatvxpvtqctyg.supabase.co';
-  const STORAGE_PATH = '/storage/v1/object/';
+  const STORAGE_HOST = window.location.host;
+  const STORAGE_PATH = '/api/storage/';
   const MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
   const TARGET_IMAGE_BYTES = 2.5 * 1024 * 1024;
   const MAX_IMAGE_DIMENSION = 1600;
