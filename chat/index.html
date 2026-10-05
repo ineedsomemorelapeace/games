@@ -1032,7 +1032,7 @@ let chatStartedUserId = null;
 let chatProfilePollInterval = null;
 let authInitializationUserId = null;
 
-async function removeCarsonGames backendChannel(channel) {
+async function removeBackendChannel(channel) {
   if (!channel) return;
   try {
     await backend.removeChannel(channel);
@@ -1051,7 +1051,7 @@ async function stopChatRuntime() {
   publicChannel = null;
   privateChannel = null;
   userProfileChannel = null;
-  await Promise.all(channelsToRemove.map(removeCarsonGames backendChannel));
+  await Promise.all(channelsToRemove.map(removeBackendChannel));
 
   const scroller = document.getElementById('message-scroller');
   if (scroller) scroller.removeEventListener('scroll', handleScrollPagination);
@@ -1151,7 +1151,7 @@ backend.auth.onAuthStateChange(async (event, session) => {
     currentUserBanReason = profile.banReason || "";
   }
 
-  await removeCarsonGames backendChannel(userProfileChannel);
+  await removeBackendChannel(userProfileChannel);
   userProfileChannel = null;
   userProfileChannel = backend
     .channel(`public:users:id=eq.${user.id}`)
@@ -1886,7 +1886,7 @@ function broadcastVCPresence(roomId, peerId) {
   vcChannelTransition = vcChannelTransition.then(async () => {
     if (generation !== vcPresenceGeneration || !vcActiveRoomId) return;
 
-    await removeCarsonGames backendChannel(vcRealtimeChannel);
+    await removeBackendChannel(vcRealtimeChannel);
     vcRealtimeChannel = null;
 
     const channel = backend.channel(`vc_room_${roomId}`, {
@@ -2088,7 +2088,7 @@ async function leaveVoiceRoom({ cleanupRoom = true } = {}) {
         timestamp: Date.now()
       }
     }).catch(error => console.warn('Failed to broadcast voice leave:', error));
-    await removeCarsonGames backendChannel(channel);
+    await removeBackendChannel(channel);
   }
 
   if (cleanupRoom && vcActiveRoomId && vcParticipants.size <= 1) {
@@ -3179,7 +3179,7 @@ async function listenForNewMessages(user) {
     renderMessages();
   }
 
-  await removeCarsonGames backendChannel(publicChannel);
+  await removeBackendChannel(publicChannel);
   publicChannel = null;
   publicChannel = backend
     .channel('public:messages')
@@ -3203,7 +3203,7 @@ async function listenForNewMessages(user) {
     })
     .subscribe();
 
-  await removeCarsonGames backendChannel(privateChannel);
+  await removeBackendChannel(privateChannel);
   privateChannel = null;
   privateChannel = backend
     .channel('public:whispers')

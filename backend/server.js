@@ -13,6 +13,8 @@ const app = express();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false });
 const jwtSecret = process.env.JWT_SECRET || "change-this-before-production";
+const eventLog = [];
+let eventCursor = 0;
 
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
@@ -63,6 +65,11 @@ function safeIdentifier(value) {
   return typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
+function publishEvent(channel, event, payload) {
+  eventLog.push({ cursor: ++eventCursor, channel, event, payload });
+  if (eventLog.length > 2000) eventLog.shift();
+}
+
 app.get("/api/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -98,6 +105,17 @@ app.post("/api/auth/signout", (_req, res) => {
   res.clearCookie("carsongames_session");
   res.json({ ok: true });
 });
+
+app.get("/api/events", requireUser(async (req, res) => {
+  const after = Number(req.query.after || 0);
+  res.json({ events: eventLog.filter(event => event.cursor > after), nextCursor: eventCursor });
+}));
+
+app.post("/api/events/broadcast", requireUser(async (req, res) => {
+  if (typeof req.body.channel !== "string" || typeof req.body.event !== "string") return res.status(400).json({ error: "Invalid event." });
+  publishEvent(req.body.channel, req.body.event, req.body.payload || {});
+  res.json({ ok: true });
+}));
 
 app.put("/api/storage/:bucket/*", requireUser(async (req, res) => {
   const objectPath = req.params[0];

@@ -93,13 +93,108 @@ function storageApi() {
   };
 }
 
+function parseChannelFilter(filter) {
+  if (!filter) return null;
+  const match = filter.match(/^([A-Za-z_][A-Za-z0-9_]*)=(eq|neq|ilike|gte)=(.*)$/);
+  return match ? { column: match[1], operator: match[2], value: match[3] } : null;
+}
+
+function createChannel(name) {
+  const databaseHandlers = [];
+  const broadcastHandlers = [];
+  let timer = null;
+  let eventCursor = 0;
+  let previousRows = null;
+  let stopped = false;
+
+  async function pollDatabase() {
+    const config = databaseHandlers[0]?.config;
+    if (!config || stopped) return;
+    const table = config.table;
+    const filter = parseChannelFilter(config.filter);
+    const query = request("/db/query", {
+      method: "POST",
+      body: JSON.stringify({ table, operation: "select", select: "*", filters: filter ? [filter] : [], order: { column: "id", ascending: true }, limit: 1000 })
+    });
+
+    try {
+      const rows = (await query).data || [];
+      const currentRows = new Map(rows.map(row => [String(row.id), row]));
+      if (previousRows) {
+        for (const row of rows) {
+          const key = String(row.id);
+          const oldRow = previousRows.get(key);
+          const event = oldRow ? (JSON.stringify(oldRow) === JSON.stringify(row) ? null : "UPDATE") : "INSERT";
+          if (event) databaseHandlers.filter(handler => handler.event === "*" || handler.event === event).forEach(handler => handler.callback({ event, new: row, old: oldRow }));
+        }
+        for (const [key, oldRow] of previousRows) {
+          if (!currentRows.has(key)) databaseHandlers.filter(handler => handler.event === "*" || handler.event === "DELETE").forEach(handler => handler.callback({ event: "DELETE", old: oldRow }));
+        }
+      }
+      previousRows = currentRows;
+    } catch (error) {
+      console.warn(`Channel poll failed for ${table}:`, error);
+    }
+  }
+
+  async function pollBroadcasts() {
+    if (stopped || !broadcastHandlers.length) return;
+    try {
+      const result = await request(`/events?after=${eventCursor}`);
+      eventCursor = result.nextCursor || eventCursor;
+      (result.events || []).filter(event => event.channel === name).forEach(event => {
+        broadcastHandlers.filter(handler => handler.event === event.event).forEach(handler => handler.callback({ payload: event.payload }));
+      });
+    } catch (error) {
+      console.warn(`Broadcast poll failed for ${name}:`, error);
+    }
+  }
+
+  const channel = {
+    on(type, config, callback) {
+      if (type === "postgres_changes") databaseHandlers.push({ event: config.event || "*", config, callback });
+      if (type === "broadcast") broadcastHandlers.push({ event: config.event, callback });
+      return channel;
+    },
+    subscribe(callback) {
+      if (databaseHandlers.length) {
+        pollDatabase();
+        timer = setInterval(pollDatabase, 2000);
+      }
+      if (broadcastHandlers.length) {
+        pollBroadcasts();
+        timer = setInterval(pollBroadcasts, 1000);
+      }
+      callback?.("SUBSCRIBED");
+      return { unsubscribe() { channel.stop(); } };
+    },
+    async send(message) {
+      await request("/events/broadcast", { method: "POST", body: JSON.stringify({ channel: name, event: message.event, payload: message.payload }) });
+    },
+    stop() {
+      stopped = true;
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+  };
+  return channel;
+}
+
 export function createClient() {
   const auth = authApi();
+  const channels = new Set();
   return {
     from: table => new Query(table),
     auth,
     storage: storageApi(),
-    channel: () => ({ on: function () { return this; }, subscribe: callback => { callback?.("SUBSCRIBED"); return { unsubscribe() {} }; } }),
-    removeChannel: () => {}
+    channel: name => {
+      const channel = createChannel(name);
+      channels.add(channel);
+      return channel;
+    },
+    removeChannel: channel => {
+      channel?.stop?.();
+      channels.delete(channel);
+    }
   };
 }
