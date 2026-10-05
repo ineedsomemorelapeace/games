@@ -48,6 +48,11 @@
       font-size: 1.1rem;
       animation: fadeInUp 0.8s ease-out 0.3s both;
     }
+    .hero-status { display: inline-flex; align-items: center; gap: 0.5rem; margin: 0 auto 1.5rem; padding: 0.45rem 0.75rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); font-size: 0.78rem; animation: fadeInUp 0.8s ease-out 0.45s both; }
+    .hero-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 12px #4ade80; animation: statusPulse 1.8s ease-in-out infinite; }
+    @keyframes statusPulse { 50% { opacity: 0.45; transform: scale(0.7); } }
+    .quick-hint { margin: 0 auto 2.5rem; color: var(--text-muted); font-size: 0.8rem; opacity: 0.8; animation: fadeInUp 0.8s ease-out 0.6s both; }
+    .announcement-loading { color: var(--text-muted); font-size: 0.85rem; text-align: center; padding-top: 2rem; }
     @keyframes fadeInUp {
       from { opacity: 0; transform: translateY(10px); }
       to { opacity: 1; transform: none; }
@@ -168,6 +173,8 @@
       .hero h1,
       .hero h1 span,
       .hero p,
+      .hero-status,
+      .quick-hint,
       .billboard-rect {
         animation: none !important;
       }
@@ -223,8 +230,10 @@
 
   <section class="hero">
     <a href="" class="logobig">CarsonGames</a>
-    <p></p>
+    <p>Your little corner of the internet for quick games, friendly competition, and a good time.</p>
+    <div class="hero-status" role="status">Arcade online</div>
     <a id="hero-signin-btn" href="login/" class="btn-primary">Sign In</a>
+    <div class="quick-hint">Pick a game, invite a friend, and make your next break count.</div>
   </section>
 
   <section class="hero-billboards">
@@ -244,7 +253,7 @@
       <h3>Announcements</h3>
       <hr>
       <div id="announcements-root" class="billboard-scroll-area">
-        <div style="color: var(--text-muted); font-size: 0.85rem; text-align: center; padding-top: 2rem;">Loading...</div>
+        <div class="announcement-loading">Loading...</div>
       </div>
     </div>
   </section>
@@ -252,19 +261,19 @@
   <main class="grid">
     <div class="card">
       <h3>Games</h3>
-      <p> </p>
+      <p>Browse the arcade and jump straight into something fun.</p>
       <a href="games/" class="btn-primary">Open Games</a>
     </div>
 
     <div class="card">
       <h3>Omoggle</h3>
-      <p> </p>
+      <p>Meet a competitor and put your aura to the test.</p>
       <a href="omoggle/" class="btn-primary">Open Omoggle</a>
     </div>
 
     <div class="card">
       <h3>Chat</h3>
-      <p> </p>
+      <p>Catch up with friends between rounds.</p>
       <a href="chat/" class="btn-primary">Open Chat</a>
     </div>
   </main>
