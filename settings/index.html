@@ -26,18 +26,12 @@
     }
 
     /* ── DYNAMIC THEME CLASSES ── */
-    .settings-hero { text-align: center; padding: 4rem 2rem 2rem; animation: settingsIntro 0.6s var(--ease) both; }
-    @keyframes settingsIntro { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    .settings-hero { text-align: center; padding: 4rem 2rem 2rem; }
     .settings-hero h1 { font-family: var(--font-display); font-size: 3rem; font-weight: 800; }
     .settings-hero p { color: var(--text-muted); margin-top: 0.5rem; }
 
     .settings-container { max-width: 800px; margin: 0 auto; padding: 0 2rem 6rem; width: 100%; }
-    .settings-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 2.5rem 2rem; display: flex; flex-direction: column; gap: 2.5rem; animation: settingsCardIn 0.65s var(--ease) 0.1s both; }
-    @keyframes settingsCardIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
-    .settings-section { animation: settingsSectionIn 0.5s var(--ease) both; }
-    .settings-section:nth-child(2) { animation-delay: 0.08s; }
-    .settings-section:nth-child(3) { animation-delay: 0.16s; }
-    @keyframes settingsSectionIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+    .settings-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 2.5rem 2rem; display: flex; flex-direction: column; gap: 2.5rem; }
     .settings-section { display: flex; flex-direction: column; gap: 1.25rem; }
     .settings-section h3 { font-family: var(--font-display); font-size: 1.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; color: #fff; }
     .settings-card .btn-primary {
