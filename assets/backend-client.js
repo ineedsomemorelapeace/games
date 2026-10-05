@@ -1,8 +1,8 @@
-const API_ROOT = "/api";
+const API_ROOT = "https://carson-games-e801ce365c25.herokuapp.com/api";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_ROOT}${path}`, {
-    credentials: "same-origin",
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options
   });
@@ -23,13 +23,22 @@ class Query {
     this.inputRows = null;
   }
 
-  select(columns = "*") { this.selectColumns = columns; this.operation = "select"; return this; }
+  select(columns = "*") {
+    this.selectColumns = columns;
+    if (!this.inputRows && this.operation === "select") this.operation = "select";
+    this.returnRows = this.operation === "insert" || this.operation === "update";
+    return this;
+  }
   eq(column, value) { this.filters.push({ column, operator: "eq", value }); return this; }
   neq(column, value) { this.filters.push({ column, operator: "neq", value }); return this; }
+  ilike(column, value) { this.filters.push({ column, operator: "ilike", value }); return this; }
   in(column, value) { this.filters.push({ column, operator: "in", value }); return this; }
+  contains(column, value) { this.filters.push({ column, operator: "contains", value }); return this; }
+  gte(column, value) { this.filters.push({ column, operator: "gte", value }); return this; }
   not(column, operator, value) { this.filters.push({ column, operator: operator === "is" && value === null ? "not_null" : "neq", value }); return this; }
   order(column, options = {}) { this.orderBy = { column, ascending: options.ascending !== false }; return this; }
   limit(value) { this.maxRows = value; return this; }
+  range(from, to) { this.offset = from; this.maxRows = to - from + 1; return this; }
   single() { this.singleResult = true; return this; }
   maybeSingle() { this.singleResult = true; this.maybeSingleResult = true; return this; }
   insert(rows) { this.operation = "insert"; this.inputRows = Array.isArray(rows) ? rows : [rows]; return this; }
@@ -38,7 +47,7 @@ class Query {
 
   async execute() {
     try {
-      const result = await request("/db/query", { method: "POST", body: JSON.stringify({ table: this.table, operation: this.operation, select: this.selectColumns, filters: this.filters, order: this.orderBy, limit: this.maxRows, values: this.values, rows: this.inputRows }) });
+      const result = await request("/db/query", { method: "POST", body: JSON.stringify({ table: this.table, operation: this.operation, select: this.selectColumns, filters: this.filters, order: this.orderBy, offset: this.offset, limit: this.maxRows, values: this.values, rows: this.inputRows, returning: this.returnRows }) });
       let data = result.data;
       if (this.singleResult) data = data[0] || null;
       return { data, error: null };

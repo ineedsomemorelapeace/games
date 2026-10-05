@@ -836,7 +836,7 @@
 
 <script type="module">
 import { createClient } from "../assets/backend-client.js";
-const supabase = createClient();
+const backend = createClient();
 
 /* ── iOS VISUAL VIEWPORT & KEYBOARD FIXES ─────────────── */
 function updateLayoutDimensions() {
@@ -1032,12 +1032,12 @@ let chatStartedUserId = null;
 let chatProfilePollInterval = null;
 let authInitializationUserId = null;
 
-async function removeSupabaseChannel(channel) {
+async function removeCarsonGames backendChannel(channel) {
   if (!channel) return;
   try {
-    await supabase.removeChannel(channel);
+    await backend.removeChannel(channel);
   } catch (error) {
-    console.warn('Failed to remove Supabase channel:', error);
+    console.warn('Failed to remove CarsonGames backend channel:', error);
   }
 }
 
@@ -1051,7 +1051,7 @@ async function stopChatRuntime() {
   publicChannel = null;
   privateChannel = null;
   userProfileChannel = null;
-  await Promise.all(channelsToRemove.map(removeSupabaseChannel));
+  await Promise.all(channelsToRemove.map(removeCarsonGames backendChannel));
 
   const scroller = document.getElementById('message-scroller');
   if (scroller) scroller.removeEventListener('scroll', handleScrollPagination);
@@ -1090,13 +1090,13 @@ setTimeout(() => {
   if (currentUser && !initialSnapshotReceived) {
     if (currentUserBannedUntil && Date.now() < currentUserBannedUntil) return;
     // Do not reload the entire page for a slow/temporarily unavailable
-    // Supabase request. Reloading here caused an endless retry loop.
+    // CarsonGames backend request. Reloading here caused an endless retry loop.
     console.warn("Chat initial snapshot is taking longer than expected; keeping the page alive.");
   }
 }, 10000);
 
 /* AUTH CHECK & SYNC USER ROLES / MUTE STATE */
-supabase.auth.onAuthStateChange(async (event, session) => {
+backend.auth.onAuthStateChange(async (event, session) => {
   const user = session?.user || null;
   if (!user) {
     authInitializationUserId = null;
@@ -1120,20 +1120,20 @@ supabase.auth.onAuthStateChange(async (event, session) => {
   currentUser = user;
   currentUsername = user.email ? user.email.split("@")[0] : "User";
 
-  let { data: profile, error } = await supabase
+  let { data: profile, error } = await backend
     .from("users")
     .select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt, grade, tags")
     .eq("id", user.id)
     .single();
 
   if (error) {
-    const fallbackProfile = await supabase.from("users").select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt, grade, tags").eq("id", user.id).single();
+    const fallbackProfile = await backend.from("users").select("id, username, email, role, rank, mutedUntil, bannedUntil, banReason, createdAt, grade, tags").eq("id", user.id).single();
     profile = fallbackProfile.data;
     error = fallbackProfile.error;
   }
 
   if (error || !profile) {
-    await supabase.from("users").insert({
+    await backend.from("users").insert({
       id: user.id,
       username: currentUsername,
       email: user.email,
@@ -1151,9 +1151,9 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     currentUserBanReason = profile.banReason || "";
   }
 
-  await removeSupabaseChannel(userProfileChannel);
+  await removeCarsonGames backendChannel(userProfileChannel);
   userProfileChannel = null;
-  userProfileChannel = supabase
+  userProfileChannel = backend
     .channel(`public:users:id=eq.${user.id}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${user.id}` }, payload => {
       const data = payload.new;
@@ -1261,9 +1261,9 @@ function handleBannedUserDisplay() {
 
 async function loadAndCacheAllUsers() {
   try {
-    let { data: usersData, error } = await supabase.from("users").select("id, username, role, rank, grade, tags");
+    let { data: usersData, error } = await backend.from("users").select("id, username, role, rank, grade, tags");
     if (error) {
-      const fallbackUsers = await supabase.from("users").select("id, username, role, rank, grade, tags");
+      const fallbackUsers = await backend.from("users").select("id, username, role, rank, grade, tags");
       usersData = fallbackUsers.data;
     }
     if (usersData) {
@@ -1303,7 +1303,7 @@ async function loadAvatarIndex() {
   } catch (_) {}
 
   try {
-    const { data, error } = await supabase.storage.from("chat-files").list("avatars", {
+    const { data, error } = await backend.storage.from("chat-files").list("avatars", {
       limit: 1000,
       sortBy: { column: "name", order: "desc" }
     });
@@ -1370,10 +1370,10 @@ function showGradePicker(force = false) {
         const grade = button.dataset.grade;
         const msg = overlay.querySelector("#grade-picker-msg");
         button.disabled = true;
-        const { error } = await supabase.from("users").update({ grade }).eq("id", currentUser.id);
+        const { error } = await backend.from("users").update({ grade }).eq("id", currentUser.id);
         if (error) {
           localStorage.setItem(`carsongames-grade-${currentUser.id}`, grade);
-          msg.textContent = "Saved locally. Add the grade column in Supabase to sync it across devices.";
+          msg.textContent = "Saved locally. Add the grade column in CarsonGames backend to sync it across devices.";
           msg.className = "status-msg status-error";
         } else {
           currentUserGrade = grade;
@@ -1399,7 +1399,7 @@ async function logModeratorEvent(text) {
   if (!moderatorIds.includes(currentUser.id)) moderatorIds.push(currentUser.id);
   if (moderatorIds.length === 0) return;
 
-  const { error } = await supabase.from("whispers").insert([{
+  const { error } = await backend.from("whispers").insert([{
     text,
     username: "Server",
     senderId: currentUser.id,
@@ -1423,7 +1423,7 @@ function updateAuthButtonState(isLoggedIn) {
       logoutBtn.onclick = async (e) => {
         e.preventDefault();
         try {
-          await supabase.auth.signOut();
+          await backend.auth.signOut();
           window.location.href = "../login/";
         } catch (err) {
           console.error('Logout error:', err);
@@ -1886,10 +1886,10 @@ function broadcastVCPresence(roomId, peerId) {
   vcChannelTransition = vcChannelTransition.then(async () => {
     if (generation !== vcPresenceGeneration || !vcActiveRoomId) return;
 
-    await removeSupabaseChannel(vcRealtimeChannel);
+    await removeCarsonGames backendChannel(vcRealtimeChannel);
     vcRealtimeChannel = null;
 
-    const channel = supabase.channel(`vc_room_${roomId}`, {
+    const channel = backend.channel(`vc_room_${roomId}`, {
       config: { broadcast: { self: false } }
     });
     vcRealtimeChannel = channel;
@@ -2088,14 +2088,14 @@ async function leaveVoiceRoom({ cleanupRoom = true } = {}) {
         timestamp: Date.now()
       }
     }).catch(error => console.warn('Failed to broadcast voice leave:', error));
-    await removeSupabaseChannel(channel);
+    await removeCarsonGames backendChannel(channel);
   }
 
   if (cleanupRoom && vcActiveRoomId && vcParticipants.size <= 1) {
     try {
-      await supabase.from("vc_rooms").delete().eq("room_id", vcActiveRoomId);
-      await supabase.from("messages").update({ text: "This call has ended." }).eq("room_id", vcActiveRoomId);
-      await supabase.from("whispers").update({ text: "This call has ended." }).eq("room_id", vcActiveRoomId);
+      await backend.from("vc_rooms").delete().eq("room_id", vcActiveRoomId);
+      await backend.from("messages").update({ text: "This call has ended." }).eq("room_id", vcActiveRoomId);
+      await backend.from("whispers").update({ text: "This call has ended." }).eq("room_id", vcActiveRoomId);
     } catch (e) {
       console.error("Failed to cleanup VC room", e);
     }
@@ -2366,7 +2366,7 @@ async function startChat(user) {
   
   chatProfilePollInterval = setInterval(async () => {
     if (!currentUser) return;
-    const { data: profile, error } = await supabase.from("users").select("bannedUntil, mutedUntil, role, grade, tags").eq("id", currentUser.id).single();
+    const { data: profile, error } = await backend.from("users").select("bannedUntil, mutedUntil, role, grade, tags").eq("id", currentUser.id).single();
     if (profile && !error) {
       const oldBannedUntil = currentUserBannedUntil;
       const oldMutedUntil = currentUserMutedUntil;
@@ -2424,19 +2424,19 @@ async function startChat(user) {
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
         const filePath = `${currentUser.id}/${fileName}`;
 
-        const { error: uploadError } = await supabase.storage
+        const { error: uploadError } = await backend.storage
           .from("chat-files")
           .upload(filePath, file);
 
         if (uploadError) throw uploadError;
 
-        const { data } = supabase.storage
+        const { data } = backend.storage
           .from("chat-files")
           .getPublicUrl(filePath);
 
         const publicUrl = data.publicUrl;
 
-        const { error: msgError } = await supabase.from("messages").insert([{
+        const { error: msgError } = await backend.from("messages").insert([{
           text: publicUrl,
           username: currentUsername,
           userId: currentUser.id,
@@ -2472,7 +2472,7 @@ async function startChat(user) {
 
     if (isEditingMode) {
       try {
-        const { error } = await supabase
+        const { error } = await backend
           .from(editingCollectionTarget)
           .update({ text: textToSend })
           .eq("id", editingMessageId);
@@ -2537,7 +2537,7 @@ async function startChat(user) {
         let found = localUsersCache.find(u => u.username && u.username.toLowerCase() === searchName);
         if (found) return found;
 
-        const { data } = await supabase
+        const { data } = await backend
           .from("users")
           .select("id, username, role, grade, tags")
           .ilike("username", searchName)
@@ -2590,10 +2590,10 @@ async function startChat(user) {
           return;
         }
         const savedGrade = grade === "none" ? "" : grade;
-        const { error } = await supabase.from("users").update({ grade: savedGrade }).eq("id", currentUser.id);
+        const { error } = await backend.from("users").update({ grade: savedGrade }).eq("id", currentUser.id);
         currentUserGrade = savedGrade;
         localStorage.setItem(`carsongames-grade-${currentUser.id}`, savedGrade);
-        if (error) showLocalSystemMessage("Grade saved locally. Add the grade column in Supabase to sync it across devices.", true);
+        if (error) showLocalSystemMessage("Grade saved locally. Add the grade column in CarsonGames backend to sync it across devices.", true);
         else showLocalSystemMessage(`Your chat tag is now ${savedGrade ? GRADE_TAGS[savedGrade].label : "off"}.`, false);
         renderMessages(true);
         return;
@@ -2601,7 +2601,7 @@ async function startChat(user) {
 
       if (commandKey === "/tags") {
         const targetUser = await resolveTargetUser() || { id: currentUser.id, username: currentUsername, grade: currentUserGrade, tags: currentUserTags };
-        const { data: targetProfile } = await supabase.from("users").select("username, grade, tags").eq("id", targetUser.id).maybeSingle();
+        const { data: targetProfile } = await backend.from("users").select("username, grade, tags").eq("id", targetUser.id).maybeSingle();
         const tags = profileTagsForUser(targetProfile || targetUser);
         showLocalSystemMessage(`Tags for @${targetProfile?.username || targetUser.username}: ${tags.length ? tags.map(tag => tag.label).join(", ") : "none"}`, false);
         return;
@@ -2615,7 +2615,7 @@ async function startChat(user) {
           return;
         }
         if (!checkRoleHierarchy(targetUser)) return;
-        const { data: targetProfile } = await supabase.from("users").select("tags, grade, username").eq("id", targetUser.id).maybeSingle();
+        const { data: targetProfile } = await backend.from("users").select("tags, grade, username").eq("id", targetUser.id).maybeSingle();
         let tags = normalizeProfileTags(targetProfile?.tags);
         if (action === "clear") {
           tags = [];
@@ -2630,7 +2630,7 @@ async function startChat(user) {
             tags = [...tags.filter(tag => tag.label.toLowerCase() !== label.toLowerCase()), { label, color }].slice(-8);
           }
         }
-        const { error } = await supabase.from("users").update({ tags }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ tags }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to update @${targetUser.username}'s tags: ${error.message}`, true); return; }
         showLocalSystemMessage(`Updated tags for @${targetUser.username}.`, false);
         await logModeratorEvent(`@${currentUsername} used /tag ${action} on @${targetUser.username}.`);
@@ -2640,7 +2640,7 @@ async function startChat(user) {
       }
 
       if (commandKey === "/modlogs" && isAdminPlus) {
-        const { data: logs, error } = await supabase.from("whispers").select("text, timestamp").eq("type", "mod_log").order("timestamp", { ascending: false }).limit(20);
+        const { data: logs, error } = await backend.from("whispers").select("text, timestamp").eq("type", "mod_log").order("timestamp", { ascending: false }).limit(20);
         if (error) { showLocalSystemMessage(`Failed to load moderator logs: ${error.message}`, true); return; }
         showLocalSystemMessage(logs?.length ? logs.map(log => `${new Date(log.timestamp || Date.now()).toLocaleString()}: ${log.text}`).join(" | ") : "No moderator events recorded.", false);
         return;
@@ -2654,7 +2654,7 @@ async function startChat(user) {
       if (commandKey === "/announce" && isOwnerOnly) {
         const announcement = effectiveSegments.slice(1).join(" ").trim();
         if (!announcement) { showLocalSystemMessage("Syntax: /announce message text", true); return; }
-        const { error } = await supabase.from("messages").insert([{
+        const { error } = await backend.from("messages").insert([{
           text: announcement,
           username: "Server",
           userId: null,
@@ -2668,8 +2668,8 @@ async function startChat(user) {
 
       if (commandKey === "/publicvc") {
         const roomId = "vc-pub-" + Math.random().toString(36).substring(2, 9);
-        await supabase.from("vc_rooms").insert([{ room_id: roomId, created_by: currentUsername, is_public: true }]);
-        await supabase.from("messages").insert([{
+        await backend.from("vc_rooms").insert([{ room_id: roomId, created_by: currentUsername, is_public: true }]);
+        await backend.from("messages").insert([{
           text: `@${currentUsername} started a public voice chat!`,
           username: "Server",
           userId: null,
@@ -2707,14 +2707,14 @@ async function startChat(user) {
             if (u) participantIds.push(u.id);
         }
 
-        await supabase.from("vc_rooms").insert([{
+        await backend.from("vc_rooms").insert([{
           room_id: roomId,
           created_by: currentUsername,
           is_public: false,
           allowed_users: [currentUsername.toLowerCase(), ...targetUsernamesPrivate]
         }]);
 
-        await supabase.from("whispers").insert([{
+        await backend.from("whispers").insert([{
           text: `@${currentUsername} started a private voice chat including: ${invitedList}`,
           username: "Server",
           senderId: currentUser.id,
@@ -2739,7 +2739,7 @@ async function startChat(user) {
         }
         if (!checkRoleHierarchy(targetUser)) return;
 
-        const { error } = await supabase.from("users").update({ "mutedUntil": Date.now() + durationMs }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ "mutedUntil": Date.now() + durationMs }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to mute user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Muted user @${targetUser.username} for ${durationStr}.`, false);
         await logModeratorEvent(`@${currentUsername} used /mute on @${targetUser.username} for ${durationStr}.`);
@@ -2749,7 +2749,7 @@ async function startChat(user) {
       if (commandKey === "/unmute" && isAdminPlus) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /unmute @username", true); return; }
-        const { error } = await supabase.from("users").update({ "mutedUntil": 0 }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ "mutedUntil": 0 }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to unmute user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Unmuted user @${targetUser.username}.`, false);
         await logModeratorEvent(`@${currentUsername} used /unmute on @${targetUser.username}.`);
@@ -2763,7 +2763,7 @@ async function startChat(user) {
           return;
         }
 
-        const { data: userRow, error } = await supabase
+        const { data: userRow, error } = await backend
           .from("users")
           .select("*")
           .eq("id", targetUser.id)
@@ -2816,7 +2816,7 @@ async function startChat(user) {
         if (!checkRoleHierarchy(targetUser)) return;
 
         const banTimestamp = Date.now() + durationMs;
-        const { error } = await supabase.from("users").update({ "bannedUntil": banTimestamp, "banReason": reason }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ "bannedUntil": banTimestamp, "banReason": reason }).eq("id", targetUser.id);
 
         if (error) { showLocalSystemMessage(`Failed to ban user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Successfully banned @${targetUser.username} for ${durationStr}. Reason: ${reason}`, false);
@@ -2827,7 +2827,7 @@ async function startChat(user) {
       if (commandKey === "/unban" && isAdminPlus) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /unban @username", true); return; }
-        const { error } = await supabase.from("users").update({ "bannedUntil": 0, "banReason": null }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ "bannedUntil": 0, "banReason": null }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to unban user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Lifted ban from user @${targetUser.username}.`, false);
         await logModeratorEvent(`@${currentUsername} used /unban on @${targetUser.username}.`);
@@ -2842,7 +2842,7 @@ async function startChat(user) {
         const reason = effectiveSegments.slice(2).join(" ") || "No explicit reason logged.";
         const permaTimestamp = Date.now() + (100 * 365 * 24 * 60 * 60 * 1000);
 
-        const { error } = await supabase.from("users").update({ "bannedUntil": permaTimestamp, "banReason": reason }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ "bannedUntil": permaTimestamp, "banReason": reason }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to permaban user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Permanently banned @${targetUser.username}. Reason: ${reason}`, false);
         await logModeratorEvent(`@${currentUsername} permanently banned @${targetUser.username}. Reason: ${reason}`);
@@ -2857,7 +2857,7 @@ async function startChat(user) {
         const reason = effectiveSegments.slice(2).join(" ") || "No explicit reason logged.";
         const kickTimestamp = Date.now() + (2 * 60 * 1000);
 
-        const { error } = await supabase.from("users").update({ "bannedUntil": kickTimestamp, "banReason": reason }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ "bannedUntil": kickTimestamp, "banReason": reason }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to kick user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Kicked user @${targetUser.username} for 2 minutes. Reason: ${reason}`, false);
         await logModeratorEvent(`@${currentUsername} kicked @${targetUser.username} for 2 minutes. Reason: ${reason}`);
@@ -2867,7 +2867,7 @@ async function startChat(user) {
       if (commandKey === "/admin" && isOwnerOnly) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /admin @username", true); return; }
-        const { error } = await supabase.from("users").update({ role: "admin" }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ role: "admin" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to promote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Promoted @${targetUser.username} to Admin.`, false);
         await logModeratorEvent(`@${currentUsername} promoted @${targetUser.username} to Admin.`);
@@ -2877,7 +2877,7 @@ async function startChat(user) {
       if (commandKey === "/unadmin" && isOwnerOnly) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /unadmin @username", true); return; }
-        const { error } = await supabase.from("users").update({ role: "user" }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ role: "user" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to demote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Demoted @${targetUser.username} to standard User level.`, false);
         await logModeratorEvent(`@${currentUsername} demoted @${targetUser.username} to User.`);
@@ -2887,7 +2887,7 @@ async function startChat(user) {
       if (commandKey === "/owner" && isOwnerOnly) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /owner @username", true); return; }
-        const { error } = await supabase.from("users").update({ role: "owner" }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ role: "owner" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to promote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Promoted @${targetUser.username} to Owner privileges.`, false);
         await logModeratorEvent(`@${currentUsername} promoted @${targetUser.username} to Owner.`);
@@ -2897,7 +2897,7 @@ async function startChat(user) {
       if (commandKey === "/unowner" && isOwnerOnly) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /unowner @username", true); return; }
-        const { error } = await supabase.from("users").update({ role: "admin" }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ role: "admin" }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to demote user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Demoted @${targetUser.username} to Admin.`, false);
         await logModeratorEvent(`@${currentUsername} demoted @${targetUser.username} to Admin.`);
@@ -2908,7 +2908,7 @@ async function startChat(user) {
         const targetUser = await resolveTargetUser();
         const chosenRank = effectiveSegments[2]?.toLowerCase();
         if (!targetUser || (chosenRank !== "basic" && chosenRank !== "premium")) { showLocalSystemMessage("Syntax: /subscription @username basic/premium", true); return; }
-        const { error } = await supabase.from("users").update({ rank: chosenRank }).eq("id", targetUser.id);
+        const { error } = await backend.from("users").update({ rank: chosenRank }).eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to update subscription: ${error.message}`, true); return; }
         showLocalSystemMessage(`Updated subscription parameters for @${targetUser.username} to [${chosenRank}].`, false);
         await logModeratorEvent(`@${currentUsername} changed @${targetUser.username}'s subscription rank to ${chosenRank}.`);
@@ -2919,7 +2919,7 @@ async function startChat(user) {
       if (commandKey === "/deleteuser" && isOwnerOnly) {
         const targetUser = await resolveTargetUser();
         if (!targetUser) { showLocalSystemMessage("Syntax: /deleteuser @username", true); return; }
-        const { error } = await supabase.from("users").delete().eq("id", targetUser.id);
+        const { error } = await backend.from("users").delete().eq("id", targetUser.id);
         if (error) { showLocalSystemMessage(`Failed to delete user: ${error.message}`, true); return; }
         showLocalSystemMessage(`Purged user database records for user identity: @${targetUser.username}.`, false);
         await logModeratorEvent(`@${currentUsername} used /deleteuser on @${targetUser.username}.`);
@@ -2928,8 +2928,13 @@ async function startChat(user) {
       }
 
       if (commandKey === "/deleteall" && isAdminPlus) {
-        await supabase.from("messages").delete().not('id', 'is', null);
-        await supabase.from("whispers").delete().not('id', 'is', null);
+        await backend.from("messages").delete().not('id', 'is', null);
+        await backend.from("whispers").delete().not('id', 'is', null);
+        const { data: storedFiles, error: storageListError } = await backend.storage.from("chat-files").list();
+        if (!storageListError && storedFiles?.length) {
+          const { error: storageDeleteError } = await backend.storage.from("chat-files").remove(storedFiles.map(file => file.name).filter(Boolean));
+          if (storageDeleteError) console.warn("Chat storage cleanup failed:", storageDeleteError);
+        }
         showLocalSystemMessage("Database messages and whispers wiped.", false);
         await logModeratorEvent(`@${currentUsername} used /deleteall.`);
         return;
@@ -2946,7 +2951,7 @@ async function startChat(user) {
         
         let warnCount = 1;
         try {
-            const { data: warnsToday } = await supabase
+            const { data: warnsToday } = await backend
                 .from("whispers")
                 .select("id")
                 .contains("participants", [targetUser.id])
@@ -2957,7 +2962,7 @@ async function startChat(user) {
 
         const warnText = `Warning ${warnCount}: ${reason}`;
         
-        await supabase.from("whispers").insert([{
+        await backend.from("whispers").insert([{
             text: warnText,
             username: "Server",
             senderId: currentUser.id,
@@ -2974,10 +2979,10 @@ async function startChat(user) {
         if (!lastActionLog) { showLocalSystemMessage("No valid local environment modifications recorded.", true); return; }
         try {
           if (lastActionLog.type === "delete") {
-            await supabase.from(lastActionLog.collection).insert([lastActionLog.data]);
+            await backend.from(lastActionLog.collection).insert([lastActionLog.data]);
             showLocalSystemMessage("Undo Executed: Restored deleted record.");
           } else if (lastActionLog.type === "edit") {
-            await supabase.from(lastActionLog.collection).update({ text: lastActionLog.data.text }).eq("id", lastActionLog.id);
+            await backend.from(lastActionLog.collection).update({ text: lastActionLog.data.text }).eq("id", lastActionLog.id);
             showLocalSystemMessage("Undo Executed: Reverted text modifications.");
           }
           lastActionLog = null;
@@ -3071,10 +3076,10 @@ async function startChat(user) {
           challengePayload.inviteStatus = "pending";
         }
 
-        const { error } = await supabase.from("whispers").insert([challengePayload]);
+        const { error } = await backend.from("whispers").insert([challengePayload]);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("messages").insert([{
+        const { error } = await backend.from("messages").insert([{
           text: textToSend,
           username: currentUsername,
           userId: user.id,
@@ -3129,7 +3134,7 @@ async function listenForNewMessages(user) {
   let initialPublic = null;
   let publicLoadError = null;
 
-  const publicQuery = supabase
+  const publicQuery = backend
     .from("messages")
     .select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId")
     .order("timestamp", { ascending: false })
@@ -3142,7 +3147,7 @@ async function listenForNewMessages(user) {
   // missing/renamed column from making the chat appear to endlessly reload.
   if (publicLoadError) {
     console.warn("Optimized message query failed; retrying with full rows:", publicLoadError);
-    const fallback = await supabase
+    const fallback = await backend
       .from("messages")
       .select("*")
       .order("timestamp", { ascending: false })
@@ -3164,7 +3169,7 @@ async function listenForNewMessages(user) {
     renderMessages();
   }
 
-  const { data: initialPrivate } = await supabase
+  const { data: initialPrivate } = await backend
     .from("whispers")
     .select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId")
     .contains("participants", [user.id]);
@@ -3174,9 +3179,9 @@ async function listenForNewMessages(user) {
     renderMessages();
   }
 
-  await removeSupabaseChannel(publicChannel);
+  await removeCarsonGames backendChannel(publicChannel);
   publicChannel = null;
-  publicChannel = supabase
+  publicChannel = backend
     .channel('public:messages')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
       const newMsg = { ...payload.new, isWhisper: false, isSystemMessage: payload.new.role === "system" };
@@ -3198,9 +3203,9 @@ async function listenForNewMessages(user) {
     })
     .subscribe();
 
-  await removeSupabaseChannel(privateChannel);
+  await removeCarsonGames backendChannel(privateChannel);
   privateChannel = null;
-  privateChannel = supabase
+  privateChannel = backend
     .channel('public:whispers')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whispers' }, payload => {
       const newWhisper = payload.new;
@@ -3252,7 +3257,7 @@ async function jumpToMessage(collection, messageId) {
   let target = document.querySelector(selector(messageId));
   if (!target) {
     try {
-      const { data, error } = await supabase.from(collection).select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId").eq("id", messageId).maybeSingle();
+      const { data, error } = await backend.from(collection).select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId").eq("id", messageId).maybeSingle();
       if (!error && data) {
         const normalized = {
           ...data,
@@ -3327,12 +3332,12 @@ async function forwardMessage(msgData, collection) {
   try {
     if (collection === "whispers") {
       const participants = Array.isArray(msgData.participants) && msgData.participants.length > 0 ? msgData.participants : [currentUser.id];
-      const { error } = await supabase.from("whispers").insert([{
+      const { error } = await backend.from("whispers").insert([{
         ...base, senderId: currentUser.id, participants, isWhisper: true, isSystemMessage: false
       }]);
       if (error) throw error;
     } else {
-      const { error } = await supabase.from("messages").insert([{ ...base, userId: currentUser.id }]);
+      const { error } = await backend.from("messages").insert([{ ...base, userId: currentUser.id }]);
       if (error) throw error;
     }
     lastMessageTime = now;
@@ -3442,7 +3447,7 @@ function displayMessage(scroller, msgData) {
   let textContent = "";
   const rawText = msgData.text || "";
 
-  const isImage = (/\.(jpg|jpeg|png|webp|gif|svg)($|\?)/i.test(rawText)) || (rawText.includes('/storage/v1/object/public/') && /\.(jpg|jpeg|png|webp|gif|svg)/i.test(rawText));
+  const isImage = (/\.(jpg|jpeg|png|webp|gif|svg)($|\?)/i.test(rawText)) || (rawText.includes('/api/storage/') && /\.(jpg|jpeg|png|webp|gif|svg)/i.test(rawText));
   const isVideo = (/\.(mp4|webm|mov)($|\?)/i.test(rawText));
   const isAudio = (/\.(mp3|wav|ogg)($|\?)/i.test(rawText));
 
@@ -3457,7 +3462,7 @@ function displayMessage(scroller, msgData) {
     textContent = `<video controls playsinline webkit-playsinline src="${escapeHtml(rawText)}" style="max-width: 100%; max-height: 300px; border-radius: 8px; margin-top: 6px;"></video>`;
   } else if (isAudio) {
     textContent = `<audio controls src="${escapeHtml(rawText)}" style="margin-top: 6px; max-width: 100%;"></audio>`;
-  } else if (rawText.startsWith("https://") && rawText.includes("/storage/v1/object/public/")) {
+  } else if (rawText.startsWith("https://") && rawText.includes("/api/storage/")) {
     const fileName = rawText.split('/').pop().split('?')[0];
     textContent = `<a href="${escapeHtml(rawText)}" target="_blank" download style="display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06); padding: 8px 12px; border-radius: 6px; color: #3b82f6; text-decoration: none; font-weight: 600; margin-top: 4px;">Download ${escapeHtml(fileName)}</a>`;
   } else {
@@ -3598,7 +3603,7 @@ function displayMessage(scroller, msgData) {
         e.stopPropagation();
         accBtn.disabled = true;
         if (decBtn) decBtn.disabled = true;
-        const { error } = await supabase.from("whispers").update({ inviteStatus: "accepted" }).eq("id", msgData.id);
+        const { error } = await backend.from("whispers").update({ inviteStatus: "accepted" }).eq("id", msgData.id);
         if (error) {
           console.error("Accept error:", error);
           showLocalSystemMessage("Failed to accept duel.", true);
@@ -3613,7 +3618,7 @@ function displayMessage(scroller, msgData) {
         e.stopPropagation();
         decBtn.disabled = true;
         if (accBtn) accBtn.disabled = true;
-        const { error } = await supabase.from("whispers").update({ inviteStatus: "declined" }).eq("id", msgData.id);
+        const { error } = await backend.from("whispers").update({ inviteStatus: "declined" }).eq("id", msgData.id);
         if (error) {
           console.error("Decline error:", error);
           showLocalSystemMessage("Failed to decline duel.", true);
@@ -3670,11 +3675,11 @@ function displayMessage(scroller, msgData) {
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
       try {
-        const { data: record } = await supabase.from(dataCollectionTargetStr).select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId").eq("id", msgData.id).single();
+        const { data: record } = await backend.from(dataCollectionTargetStr).select("id, text, username, userId, senderId, avatar, role, timestamp, type, room_id, participants, isOmoggleInvite, inviteStatus, reply_to_id, reply_to_collection, reply_to_username, reply_to_text, forward_of_id, forward_of_collection, forward_of_text, clientSideId").eq("id", msgData.id).single();
         if (record) {
           lastActionLog = { type: "delete", collection: dataCollectionTargetStr, id: msgData.id, data: record };
         }
-        await supabase.from(dataCollectionTargetStr).delete().eq("id", msgData.id);
+        await backend.from(dataCollectionTargetStr).delete().eq("id", msgData.id);
       } catch(err) {
         console.error("Failed to process document purge lifecycle steps:", err);
       }
@@ -3970,7 +3975,7 @@ async function handleScrollPagination() {
     const initialScrollHeight = scroller.scrollHeight;
 
     try {
-      const { data: olderMessages } = await supabase
+      const { data: olderMessages } = await backend
         .from("messages")
         .select("*")
         .order("timestamp", { ascending: false })
@@ -4021,7 +4026,7 @@ function loadAvatarImageForUser(userId) {
 
   const entry = avatarIndexByUserId.get(userId);
   const avatarFileName = entry ? entry.fileName : `${userId}.jpg`;
-  const publicUrl = supabase.storage
+  const publicUrl = backend.storage
     .from("chat-files")
     .getPublicUrl(`avatars/${avatarFileName}`).data.publicUrl;
 

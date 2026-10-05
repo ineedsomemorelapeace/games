@@ -690,7 +690,7 @@
 
   <script type="module">
     import { createClient } from "../assets/backend-client.js";
-    const supabase = createClient();
+    const backend = createClient();
 
     const container = document.getElementById('auth-button-container');
 
@@ -709,7 +709,7 @@
           logoutBtn.addEventListener('click', async (e) => {
             e.preventDefault();
             try {
-              await supabase.auth.signOut();
+              await backend.auth.signOut();
               window.location.reload();
             } catch (err) {
               console.error('Logout error:', err);
@@ -722,8 +722,8 @@
       }
     };
 
-    // Correct fixed hook for Supabase subscription architecture
-    supabase.auth.onAuthStateChange((event, session) => {
+    // Correct fixed hook for CarsonGames backend subscription architecture
+    backend.auth.onAuthStateChange((event, session) => {
       renderAuthState(session?.user || null);
     });
   </script>

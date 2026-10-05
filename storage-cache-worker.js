@@ -1,5 +1,5 @@
 const CACHE_NAME = 'carsongames-storage-v2';
-const STORAGE_HOST = self.location.host;
+const STORAGE_HOST = 'carson-games-e801ce365c25.herokuapp.com';
 const STORAGE_PREFIX = '/api/storage/chat-files/';
 const MAX_CACHED_BYTES = 10 * 1024 * 1024;
 

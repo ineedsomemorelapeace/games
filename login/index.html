@@ -67,7 +67,7 @@
 
 <script type="module">
 import { createClient } from "../assets/backend-client.js";
-const supabase = createClient();
+const backend = createClient();
 
 /* ELEMENTS */
 const form = document.getElementById("auth-form");
@@ -100,7 +100,7 @@ async function signUp(username, emailVal, passwordVal) {
   }
 
   // Check if the username already exists in the database
-  const { data: existingUsers, error: checkError } = await supabase
+  const { data: existingUsers, error: checkError } = await backend
     .from("users")
     .select("id")
     .eq("username", username.trim())
@@ -118,7 +118,7 @@ async function signUp(username, emailVal, passwordVal) {
   }
 
   // Pass username inside raw_user_meta_data for the DB trigger
-  const { data, error } = await supabase.auth.signUp({
+  const { data, error } = await backend.auth.signUp({
     email: emailVal,
     password: passwordVal,
     options: {
@@ -138,7 +138,7 @@ async function signUp(username, emailVal, passwordVal) {
 
 /* SIGN IN */
 async function signIn(emailVal, passwordVal) {
-  const { error } = await supabase.auth.signInWithPassword({
+  const { error } = await backend.auth.signInWithPassword({
     email: emailVal,
     password: passwordVal
   });
@@ -198,7 +198,7 @@ form.addEventListener("submit", async (e) => {
 });
 
 /* AUTH CHECK */
-supabase.auth.onAuthStateChange((event, session) => {
+backend.auth.onAuthStateChange((event, session) => {
   if (session?.user) {
     // Keep user state tracked if needed
   }

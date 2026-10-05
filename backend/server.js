@@ -17,6 +17,19 @@ const jwtSecret = process.env.JWT_SECRET || "change-this-before-production";
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && (/^https:\/\/[a-z0-9-]+\.github\.io$/i.test(origin) || /^http:\/\/localhost(?::\d+)?$/i.test(origin))) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+    res.setHeader("Vary", "Origin");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 function publicUser(user) {
   if (!user) return null;
   const { password_hash: ignored, ...safeUser } = user;
@@ -25,7 +38,7 @@ function publicUser(user) {
 
 function issueSession(user, res) {
   const token = jwt.sign({ id: user.id }, jwtSecret, { expiresIn: "30d" });
-  res.cookie("carsongames_session", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 30 * 24 * 60 * 60 * 1000 });
+  res.cookie("carsongames_session", token, { httpOnly: true, sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", secure: process.env.NODE_ENV === "production", maxAge: 30 * 24 * 60 * 60 * 1000 });
 }
 
 async function currentUser(req) {
@@ -123,16 +136,19 @@ app.patch("/api/auth/password", requireUser(async (req, res) => {
 }));
 
 app.post("/api/db/query", requireUser(async (req, res) => {
-  const { table, operation, values = [], filters = [], select = "*", order, limit, rows: inputRows } = req.body;
+  const { table, operation, values = [], filters = [], select = "*", order, offset = 0, limit, rows: inputRows, returning } = req.body;
   if (!safeIdentifier(table)) return res.status(400).json({ error: "Invalid collection." });
   if (table === "users" && !["select", "update"].includes(operation)) return res.status(400).json({ error: "Unsupported users operation." });
   const isNative = table === "users" || table === "announcements";
   const params = [];
   const where = filters.map(({ column, operator = "eq", value }) => {
-    if (!safeIdentifier(column) || !["eq", "neq", "in", "not_null"].includes(operator)) throw new Error("Invalid filter.");
+    if (!safeIdentifier(column) || !["eq", "neq", "in", "not_null", "ilike", "contains", "gte"].includes(operator)) throw new Error("Invalid filter.");
     const field = isNative ? `"${column}"` : (column === "id" ? `"id"` : `data->>'${column}'`);
     if (operator === "not_null") return `${field} IS NOT NULL`;
     if (operator === "in") { params.push(value); return `${field} = ANY($${params.length})`; }
+    if (operator === "contains") { params.push(JSON.stringify(value)); return `${isNative ? field : `data->'${column}'`} @> $${params.length}::jsonb`; }
+    if (operator === "ilike") { params.push(value); return `${field} ILIKE $${params.length}`; }
+    if (operator === "gte") { params.push(value); return `${field} >= $${params.length}`; }
     params.push(value); return `${field} ${operator === "neq" ? "<>" : "="} $${params.length}`;
   });
   const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
@@ -144,7 +160,8 @@ app.post("/api/db/query", requireUser(async (req, res) => {
     const orderField = order?.column && safeIdentifier(order.column) ? (isNative ? `"${order.column}"` : (order.column === "id" ? `"id"` : `data->>'${order.column}'`)) : "created_at";
     const orderSql = ` ORDER BY ${orderField} ${order?.ascending === false ? "DESC" : "ASC"}`;
     const limitSql = Number.isInteger(limit) ? ` LIMIT ${Math.max(1, Math.min(limit, 100))}` : "";
-    const { rows } = await pool.query(`SELECT ${columns} FROM ${tableSql}${whereSql}${collectionSql}${orderSql}${limitSql}`, params);
+    const offsetSql = Number.isInteger(offset) && offset > 0 ? ` OFFSET ${offset}` : "";
+    const { rows } = await pool.query(`SELECT ${columns} FROM ${tableSql}${whereSql}${collectionSql}${orderSql}${limitSql}${offsetSql}`, params);
     const result = isNative ? rows : rows.map(row => ({ id: row.id, ...row.data }));
     return res.json({ data: result, error: null });
   }
@@ -169,9 +186,19 @@ app.post("/api/db/query", requireUser(async (req, res) => {
       const updateParams = operation === "update" ? [JSON.stringify(data), table, ...params] : [table, ...params];
       const genericWhere = filters.map(({ column, operator = "eq" }, index) => `(data->>'${column}') ${operator === "neq" ? "<>" : "="} $${index + (operation === "update" ? 3 : 2)}`).join(" AND ");
       const collectionParameter = operation === "update" ? 2 : 1;
-      await pool.query(`${operation === "update" ? "UPDATE app_records SET data = data || $1::jsonb" : "DELETE FROM app_records"} WHERE collection = $${collectionParameter}${genericWhere ? ` AND ${genericWhere}` : ""}`, updateParams);
+      const mutation = `${operation === "update" ? "UPDATE app_records SET data = data || $1::jsonb" : "DELETE FROM app_records"} WHERE collection = $${collectionParameter}${genericWhere ? ` AND ${genericWhere}` : ""}${operation === "update" && returning ? " RETURNING id, data" : ""}`;
+      const result = await pool.query(mutation, updateParams);
+      if (operation === "update" && returning) return res.json({ data: result.rows.map(row => ({ id: row.id, ...row.data })), error: null });
     } else if (operation === "delete") await pool.query(`DELETE FROM "${table}"${whereSql}`, params);
-    else { const entries = Object.keys(values[0] || {}).filter(safeIdentifier); await pool.query(`UPDATE "${table}" SET ${entries.map((column, index) => `"${column}" = $${index + 1}`).join(", ")} ${whereSql}`, [...entries.map(column => values[0][column]), ...params]); }
+    else {
+      const entries = Object.keys(values[0] || {}).filter(safeIdentifier);
+      const result = await pool.query(`UPDATE "${table}" SET ${entries.map((column, index) => `"${column}" = $${index + 1}`).join(", ")} ${whereSql}${returning ? " RETURNING *" : ""}`, [...entries.map(column => values[0][column]), ...params]);
+      if (returning) return res.json({ data: result.rows, error: null });
+    }
+    if (returning) {
+      const { rows } = await pool.query(`SELECT * FROM ${tableSql}${whereSql}${collectionSql}`, params);
+      return res.json({ data: isNative ? rows : rows.map(row => ({ id: row.id, ...row.data })), error: null });
+    }
     return res.json({ data: [], error: null });
   }
   res.status(400).json({ error: "Unsupported database operation." });

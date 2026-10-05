@@ -271,7 +271,7 @@
 
   <script type="module">
     import { createClient } from "./assets/backend-client.js";
-    const supabase = createClient();
+    const backend = createClient();
 
     const container = document.getElementById('auth-button-container');
     const heroSignInBtn = document.getElementById('hero-signin-btn');
@@ -301,7 +301,7 @@
           logoutBtn.addEventListener('click', async (e) => {
             e.preventDefault();
             try {
-              await supabase.auth.signOut();
+              await backend.auth.signOut();
               window.location.reload();
             } catch (err) {
               console.error('Logout error:', err);
@@ -309,7 +309,7 @@
           });
         }
 
-        const { data: profile } = await supabase.from("users").select("background").eq("id", user.id).single();
+        const { data: profile } = await backend.from("users").select("background").eq("id", user.id).single();
         if (profile && profile.background) {
           localStorage.setItem('carson_theme', profile.background);
           document.body.className = profile.background === 'default' ? '' : 'theme-' + profile.background;
@@ -326,7 +326,7 @@
       const targetFeed = document.getElementById("announcements-root");
       if (!targetFeed) return;
 
-      const { data: records, error } = await supabase
+      const { data: records, error } = await backend
         .from("announcements")
         .select("*")
         .order("created_at", { ascending: false });
@@ -352,14 +352,14 @@
     };
 
     // Live Realtime Listener
-    supabase
+    backend
       .channel('public:announcements')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
         loadAnnouncements();
       })
       .subscribe();
 
-    supabase.auth.onAuthStateChange((event, session) => {
+    backend.auth.onAuthStateChange((event, session) => {
       renderAuthState(session?.user || null);
     });
 

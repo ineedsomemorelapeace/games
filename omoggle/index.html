@@ -236,8 +236,8 @@
       ]
     };
 
-    /* SUPABASE CONFIG */
-    const supabase = createClient();
+    /* CarsonGames backend CONFIG */
+    const backend = createClient();
 
     const stageLobby = document.getElementById('stage-lobby');
     const stageSearching = document.getElementById('stage-searching');
@@ -358,7 +358,7 @@
       }
 
       currentUserProfile.id = user.id;
-      const { data: userSnap } = await supabase
+      const { data: userSnap } = await backend
         .from("users")
         .select("username")
         .eq("id", user.id)
@@ -373,7 +373,7 @@
         logoutBtn.onclick = async () => {
           safelyStopCameraTracks();
           if (peer && !peer.destroyed) peer.destroy();
-          await supabase.auth.signOut();
+          await backend.auth.signOut();
           window.location.reload();
         };
       }
@@ -391,7 +391,7 @@
       await initPeerSession();
     };
 
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    backend.auth.onAuthStateChange(async (event, session) => {
       const user = session?.user || null;
       if (!user) {
         authButtonContainer.innerHTML = '<a href="../login/" class="nav-auth-btn">Sign In</a>';
@@ -437,7 +437,7 @@
       switchStage(stageSearching);
 
       try {
-        const { data: queueItems } = await supabase
+        const { data: queueItems } = await backend
           .from("showdown_queue")
           .select("*")
           .eq("status", "waiting")
@@ -447,7 +447,7 @@
         let selectedDoc = queueItems?.[0];
 
         if (selectedDoc) {
-          const { data: matchedRows, error: matchError } = await supabase
+          const { data: matchedRows, error: matchError } = await backend
             .from("showdown_queue")
             .update({
               status: "matched",
@@ -474,7 +474,7 @@
         }
 
         isHost = true;
-        const { data: newQueueItem, error: insertError } = await supabase
+        const { data: newQueueItem, error: insertError } = await backend
           .from("showdown_queue")
           .insert([{
             status: "waiting",
@@ -499,17 +499,17 @@
         if (newQueueItem) {
           activeQueueDocRef = newQueueItem.id;
 
-          if (queueChannel) supabase.removeChannel(queueChannel);
+          if (queueChannel) backend.removeChannel(queueChannel);
 
-          queueChannel = supabase
+          queueChannel = backend
             .channel(`public:showdown_queue:id=eq.${newQueueItem.id}`)
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'showdown_queue', filter: `id=eq.${newQueueItem.id}` }, async (payload) => {
               const d = payload.new;
               if (d && d.status === "matched") {
                 opponentNameTag.innerText = d.guestname || "Player";
-                await supabase.from("showdown_queue").delete().eq("id", newQueueItem.id);
+                await backend.from("showdown_queue").delete().eq("id", newQueueItem.id);
                 if (queueChannel) {
-                  supabase.removeChannel(queueChannel);
+                  backend.removeChannel(queueChannel);
                   queueChannel = null;
                 }
               }
@@ -525,11 +525,11 @@
 
     async function cancelSearch() {
       if (queueChannel) {
-        supabase.removeChannel(queueChannel);
+        backend.removeChannel(queueChannel);
         queueChannel = null;
       }
       if (isHost && activeQueueDocRef) {
-        await supabase.from("showdown_queue").delete().eq("id", activeQueueDocRef);
+        await backend.from("showdown_queue").delete().eq("id", activeQueueDocRef);
         activeQueueDocRef = null;
       }
       if (currentConnection) {

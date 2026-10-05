@@ -454,7 +454,7 @@
 
   <script type="module">
     import { createClient } from "../assets/backend-client.js";
-    const supabase = createClient();
+    const backend = createClient();
 
     const settingsWrapper = document.getElementById('settings-wrapper');
     const navAuthContainer = document.getElementById('auth-button-container');
@@ -486,7 +486,7 @@
       navAuthContainer.innerHTML = '<a id="logout-btn" href="#" class="nav-auth-btn">Logout</a>';
       navAuthContainer.style.display = '';
 
-      const { data: profile } = await supabase.from("users").select("*").eq("id", user.id).single();
+      const { data: profile } = await backend.from("users").select("*").eq("id", user.id).single();
       const currentBgSetting = (profile && profile.background) ? profile.background : 'default';
       const currentUserRole = (profile && profile.role) ? profile.role : 'user';
       const avatarSourceName = profile?.username || user.email || 'User';
@@ -494,7 +494,7 @@
       window.CarsonGamesTheme.apply(currentBgSetting);
 
       async function getLatestAvatarPathForUser(userId) {
-        const { data, error } = await supabase.storage.from('chat-files').list('avatars', {
+        const { data, error } = await backend.storage.from('chat-files').list('avatars', {
           limit: 1000,
           sortBy: { column: 'name', order: 'desc' }
         });
@@ -529,7 +529,7 @@
 
       function getAvatarPublicUrl(storagePath) {
         if (!storagePath) return '';
-        const { data } = supabase.storage.from('chat-files').getPublicUrl(storagePath);
+        const { data } = backend.storage.from('chat-files').getPublicUrl(storagePath);
         return data.publicUrl;
       }
 
@@ -726,7 +726,7 @@
       async function clearStoredAvatar() {
         const filesToRemove = [`avatars/${user.id}.jpg`];
 
-        const { data, error } = await supabase.storage.from('chat-files').list('avatars', {
+        const { data, error } = await backend.storage.from('chat-files').list('avatars', {
           limit: 1000,
           sortBy: { column: 'name', order: 'desc' }
         });
@@ -738,7 +738,7 @@
           .filter(name => name && name.startsWith(`${user.id}__`))
           .forEach(name => filesToRemove.push(`avatars/${name}`));
 
-        const { error: removeError } = await supabase.storage.from('chat-files').remove(filesToRemove);
+        const { error: removeError } = await backend.storage.from('chat-files').remove(filesToRemove);
         if (removeError) throw removeError;
       }
 
@@ -948,7 +948,7 @@
           await clearStoredAvatar();
 
           const storagePath = `avatars/${user.id}__${Date.now()}.jpg`;
-          const { error: uploadError } = await supabase.storage
+          const { error: uploadError } = await backend.storage
             .from('chat-files')
             .upload(storagePath, avatarBlob, {
               contentType: 'image/jpeg',
@@ -1006,7 +1006,7 @@
 
           try {
             window.CarsonGamesTheme.apply(theme.id);
-            await supabase.from("users").update({ background: theme.id }).eq("id", user.id);
+            await backend.from("users").update({ background: theme.id }).eq("id", user.id);
             bgMsg.textContent = "Theme updated!";
             bgMsg.className = "status-msg status-success";
           } catch(err) {
@@ -1074,12 +1074,12 @@
             msgEl.textContent = "Saving changes...";
             msgEl.className = "status-msg";
 
-            const { error: deleteError } = await supabase.from("announcements").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+            const { error: deleteError } = await backend.from("announcements").delete().neq("id", "00000000-0000-0000-0000-000000000000");
             if (deleteError) throw deleteError;
 
             if (updatedTexts.length > 0) {
               const rowsToInsert = updatedTexts.map(text => ({ text }));
-              const { error: insertError } = await supabase.from("announcements").insert(rowsToInsert);
+              const { error: insertError } = await backend.from("announcements").insert(rowsToInsert);
               if (insertError) throw insertError;
             }
 
@@ -1100,7 +1100,7 @@
         const newUsername = document.getElementById('username').value.trim();
         const msgEl = document.getElementById('username-msg');
         try {
-          const { error } = await supabase
+          const { error } = await backend
             .from("users")
             .update({ username: newUsername })
             .eq("id", user.id);
@@ -1119,10 +1119,10 @@
         e.preventDefault();
         const grade = document.getElementById('grade').value;
         const msgEl = document.getElementById('grade-msg');
-        const { error } = await supabase.from('users').update({ grade }).eq('id', user.id);
+        const { error } = await backend.from('users').update({ grade }).eq('id', user.id);
         localStorage.setItem(`carsongames-grade-${user.id}`, grade);
         if (error) {
-          msgEl.textContent = 'Saved locally. Add the grade column in Supabase to sync it across devices.';
+          msgEl.textContent = 'Saved locally. Add the grade column in CarsonGames backend to sync it across devices.';
           msgEl.className = 'status-msg status-error';
           return;
         }
@@ -1147,7 +1147,7 @@
           msgEl.textContent = 'Updating password...';
           msgEl.className = 'status-msg';
 
-          const { error } = await supabase.auth.updateUser({ password: newPassword });
+          const { error } = await backend.auth.updateUser({ password: newPassword });
 
           if (error) throw error;
 
@@ -1166,7 +1166,7 @@
       const stack = document.getElementById("announcements-stack");
       if (!stack) return;
 
-      const { data: records, error } = await supabase
+      const { data: records, error } = await backend
         .from("announcements")
         .select("*")
         .order("created_at", { ascending: true });
@@ -1196,7 +1196,7 @@
       });
     }
 
-    supabase.auth.onAuthStateChange((event, session) => {
+    backend.auth.onAuthStateChange((event, session) => {
       renderSettingsInterface(session?.user || null);
     });
   </script>
