@@ -1,13 +1,35 @@
 const API_ROOT = "https://carson-games-e801ce365c25.herokuapp.com/api";
+const SESSION_TOKEN_KEY = "carson_games_session";
+
+function getSessionToken() {
+  try { return localStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
+}
+
+function clearSessionToken() {
+  try { localStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
+}
+
+function storeSessionToken(token) {
+  if (!token) return;
+  try { localStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
+}
 
 async function request(path, options = {}) {
+  const { headers: optionHeaders, ...requestOptions } = options;
+  const headers = { "Content-Type": "application/json", ...(optionHeaders || {}) };
+  const token = getSessionToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   const response = await fetch(`${API_ROOT}${path}`, {
+    ...requestOptions,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options
+    headers
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || "The server request failed.");
+  if (!response.ok) {
+    if (response.status === 401) clearSessionToken();
+    throw new Error(body.error || "The server request failed.");
+  }
   return body;
 }
 
@@ -64,15 +86,21 @@ function authApi() {
   const notify = user => listeners.forEach(listener => listener("SIGNED_IN", { user }));
   return {
     async signUp({ username, password }) {
-      try { const result = await request("/auth/signup", { method: "POST", body: JSON.stringify({ username, password }) }); notify(result.user); return { data: result, error: null }; }
+      try { const result = await request("/auth/signup", { method: "POST", body: JSON.stringify({ username, password }) }); storeSessionToken(result.token); notify(result.user); return { data: result, error: null }; }
       catch (error) { return { data: null, error }; }
     },
     async signInWithPassword({ username, password }) {
-      try { const result = await request("/auth/signin", { method: "POST", body: JSON.stringify({ username, password }) }); notify(result.user); return { data: result, error: null }; }
+      try { const result = await request("/auth/signin", { method: "POST", body: JSON.stringify({ username, password }) }); storeSessionToken(result.token); notify(result.user); return { data: result, error: null }; }
       catch (error) { return { data: null, error }; }
     },
     async getUser() { try { const result = await request("/auth/user"); return { data: { user: result.user }, error: null }; } catch (error) { return { data: { user: null }, error }; } },
-    async signOut() { await request("/auth/signout", { method: "POST" }); notify(null); return { error: null }; },
+    async signOut() {
+      let error = null;
+      try { await request("/auth/signout", { method: "POST" }); } catch (requestError) { error = requestError; }
+      clearSessionToken();
+      notify(null);
+      return { error };
+    },
     async updateUser({ password }) { try { await request("/auth/password", { method: "PATCH", body: JSON.stringify({ password }) }); return { error: null }; } catch (error) { return { error }; } },
     onAuthStateChange(callback) { listeners.add(callback); authApi().getUser().then(result => callback("INITIAL_SESSION", result.data)); return { data: { subscription: { unsubscribe: () => listeners.delete(callback) } } }; }
   };

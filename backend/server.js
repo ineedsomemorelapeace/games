@@ -24,7 +24,7 @@ app.use((req, res, next) => {
   if (origin && (/^https:\/\/[a-z0-9-]+\.github\.io$/i.test(origin) || /^http:\/\/localhost(?::\d+)?$/i.test(origin))) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
     res.setHeader("Vary", "Origin");
   }
@@ -41,11 +41,14 @@ function publicUser(user) {
 function issueSession(user, res) {
   const token = jwt.sign({ id: user.id }, jwtSecret, { expiresIn: "30d" });
   res.cookie("carsongames_session", token, { httpOnly: true, sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", secure: process.env.NODE_ENV === "production", maxAge: 30 * 24 * 60 * 60 * 1000 });
+  return token;
 }
 
 async function currentUser(req) {
   try {
-    const payload = jwt.verify(req.cookies.carsongames_session, jwtSecret);
+    const authorization = req.get("Authorization");
+    const bearerToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+    const payload = jwt.verify(bearerToken || req.cookies.carsongames_session, jwtSecret);
     const { rows } = await pool.query("SELECT * FROM users WHERE id = $1", [payload.id]);
     return rows[0] || null;
   } catch {
@@ -88,8 +91,8 @@ app.post("/api/auth/signup", async (req, res) => {
     const hash = await bcrypt.hash(password, 12);
     const internalEmail = `${normalizedUsername.toLowerCase()}@accounts.carsongames.local`;
     const { rows } = await pool.query("INSERT INTO users (id, email, password_hash, username) VALUES ($1, $2, $3, $4) RETURNING *", [id, internalEmail, hash, normalizedUsername]);
-    issueSession(rows[0], res);
-    res.status(201).json({ user: publicUser(rows[0]) });
+    const token = issueSession(rows[0], res);
+    res.status(201).json({ user: publicUser(rows[0]), token });
   } catch (error) {
     res.status(error.code === "23505" ? 409 : 500).json({ error: error.code === "23505" ? "Username is already in use." : "Could not create account." });
   }
@@ -99,8 +102,8 @@ app.post("/api/auth/signin", async (req, res) => {
   const { username, password } = req.body;
   const { rows } = await pool.query("SELECT * FROM users WHERE LOWER(username) = LOWER($1)", [String(username || "").trim()]);
   if (!rows[0] || !(await bcrypt.compare(password || "", rows[0].password_hash))) return res.status(401).json({ error: "Invalid username or password." });
-  issueSession(rows[0], res);
-  res.json({ user: publicUser(rows[0]) });
+  const token = issueSession(rows[0], res);
+  res.json({ user: publicUser(rows[0]), token });
 });
 
 app.post("/api/auth/signout", (_req, res) => {
