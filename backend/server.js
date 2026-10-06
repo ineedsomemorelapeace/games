@@ -21,9 +21,10 @@ app.use(cookieParser());
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && (/^https:\/\/[a-z0-9-]+\.github\.io$/i.test(origin) || /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin))) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
+  const trustedOrigin = origin && (/^https:\/\/[a-z0-9-]+\.github\.io$/i.test(origin) || /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin));
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", trustedOrigin ? origin : "*");
+    if (trustedOrigin) res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
     res.setHeader("Vary", "Origin");
