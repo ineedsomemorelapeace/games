@@ -2,16 +2,22 @@ const API_ROOT = "https://carson-games-e801ce365c25.herokuapp.com/api";
 const SESSION_TOKEN_KEY = "carson_games_session";
 
 function getSessionToken() {
-  try { return localStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
+  try {
+    const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
+    if (localToken) return localToken;
+  } catch {}
+  try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
 }
 
 function clearSessionToken() {
   try { localStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
+  try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
 }
 
 function storeSessionToken(token) {
   if (!token) return;
   try { localStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
+  try { sessionStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
 }
 
 async function request(path, options = {}) {
@@ -20,11 +26,18 @@ async function request(path, options = {}) {
   const token = getSessionToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API_ROOT}${path}`, {
-    ...requestOptions,
-    credentials: "omit",
-    headers
-  });
+  let response;
+  try {
+    response = await fetch(`${API_ROOT}${path}`, {
+      ...requestOptions,
+      credentials: "omit",
+      headers
+    });
+  } catch (error) {
+    const networkError = new Error("Unable to reach the authentication service. Check your connection and try again.");
+    networkError.cause = error;
+    throw networkError;
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) clearSessionToken();
