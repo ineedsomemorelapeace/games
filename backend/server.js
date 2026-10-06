@@ -80,23 +80,25 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.post("/api/auth/signup", async (req, res) => {
-  const { email, password, username } = req.body;
-  if (!email || !password || !username || /\s/.test(username)) return res.status(400).json({ error: "A valid email, password, and username are required." });
+  const { password, username } = req.body;
+  const normalizedUsername = String(username || "").trim();
+  if (!password || !normalizedUsername || /\s/.test(normalizedUsername)) return res.status(400).json({ error: "A valid username and password are required." });
   try {
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
-    const { rows } = await pool.query("INSERT INTO users (id, email, password_hash, username) VALUES ($1, $2, $3, $4) RETURNING *", [id, email.toLowerCase(), hash, username]);
+    const internalEmail = `${normalizedUsername.toLowerCase()}@accounts.carsongames.local`;
+    const { rows } = await pool.query("INSERT INTO users (id, email, password_hash, username) VALUES ($1, $2, $3, $4) RETURNING *", [id, internalEmail, hash, normalizedUsername]);
     issueSession(rows[0], res);
     res.status(201).json({ user: publicUser(rows[0]) });
   } catch (error) {
-    res.status(error.code === "23505" ? 409 : 500).json({ error: error.code === "23505" ? "Email or username is already in use." : "Could not create account." });
+    res.status(error.code === "23505" ? 409 : 500).json({ error: error.code === "23505" ? "Username is already in use." : "Could not create account." });
   }
 });
 
 app.post("/api/auth/signin", async (req, res) => {
-  const { email, password } = req.body;
-  const { rows } = await pool.query("SELECT * FROM users WHERE email = $1", [String(email || "").toLowerCase()]);
-  if (!rows[0] || !(await bcrypt.compare(password || "", rows[0].password_hash))) return res.status(401).json({ error: "Invalid email or password." });
+  const { username, password } = req.body;
+  const { rows } = await pool.query("SELECT * FROM users WHERE LOWER(username) = LOWER($1)", [String(username || "").trim()]);
+  if (!rows[0] || !(await bcrypt.compare(password || "", rows[0].password_hash))) return res.status(401).json({ error: "Invalid username or password." });
   issueSession(rows[0], res);
   res.json({ user: publicUser(rows[0]) });
 });
@@ -200,9 +202,22 @@ app.post("/api/db/query", requireUser(async (req, res) => {
   if (operation === "update" || operation === "delete") {
     if (!isNative) {
       const data = operation === "update" ? values[0] : null;
-      const setSql = operation === "update" ? "data = data || $1::jsonb" : "data = '{}'::jsonb";
-      const updateParams = operation === "update" ? [JSON.stringify(data), table, ...params] : [table, ...params];
-      const genericWhere = filters.map(({ column, operator = "eq" }, index) => `(data->>'${column}') ${operator === "neq" ? "<>" : "="} $${index + (operation === "update" ? 3 : 2)}`).join(" AND ");
+      const mutationFilterParams = [];
+      const genericWhere = filters.map(({ column, operator = "eq", value }) => {
+        const field = operator === "contains" ? `data->'${column}'` : `data->>'${column}'`;
+        if (operator === "not_null") return `${field} IS NOT NULL`;
+        if (operator === "in") {
+          mutationFilterParams.push(value);
+          return `${field} = ANY($${mutationFilterParams.length + (operation === "update" ? 2 : 1)})`;
+        }
+        mutationFilterParams.push(operator === "contains" ? JSON.stringify(value) : value);
+        const parameter = mutationFilterParams.length + (operation === "update" ? 2 : 1);
+        if (operator === "contains") return `${field} @> $${parameter}::jsonb`;
+        if (operator === "ilike") return `${field} ILIKE $${parameter}`;
+        if (operator === "gte") return `${field} >= $${parameter}`;
+        return `${field} ${operator === "neq" ? "<>" : "="} $${parameter}`;
+      }).join(" AND ");
+      const updateParams = operation === "update" ? [JSON.stringify(data), table, ...mutationFilterParams] : [table, ...mutationFilterParams];
       const collectionParameter = operation === "update" ? 2 : 1;
       const mutation = `${operation === "update" ? "UPDATE app_records SET data = data || $1::jsonb" : "DELETE FROM app_records"} WHERE collection = $${collectionParameter}${genericWhere ? ` AND ${genericWhere}` : ""}${operation === "update" && returning ? " RETURNING id, data" : ""}`;
       const result = await pool.query(mutation, updateParams);

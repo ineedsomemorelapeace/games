@@ -63,12 +63,12 @@ function authApi() {
   const listeners = new Set();
   const notify = user => listeners.forEach(listener => listener("SIGNED_IN", { user }));
   return {
-    async signUp({ email, password, options = {} }) {
-      try { const result = await request("/auth/signup", { method: "POST", body: JSON.stringify({ email, password, username: options.data?.username }) }); notify(result.user); return { data: result, error: null }; }
+    async signUp({ username, password }) {
+      try { const result = await request("/auth/signup", { method: "POST", body: JSON.stringify({ username, password }) }); notify(result.user); return { data: result, error: null }; }
       catch (error) { return { data: null, error }; }
     },
-    async signInWithPassword({ email, password }) {
-      try { const result = await request("/auth/signin", { method: "POST", body: JSON.stringify({ email, password }) }); notify(result.user); return { data: result, error: null }; }
+    async signInWithPassword({ username, password }) {
+      try { const result = await request("/auth/signin", { method: "POST", body: JSON.stringify({ username, password }) }); notify(result.user); return { data: result, error: null }; }
       catch (error) { return { data: null, error }; }
     },
     async getUser() { try { const result = await request("/auth/user"); return { data: { user: result.user }, error: null }; } catch (error) { return { data: { user: null }, error }; } },

@@ -489,7 +489,7 @@
       const { data: profile } = await backend.from("users").select("*").eq("id", user.id).single();
       const currentBgSetting = (profile && profile.background) ? profile.background : 'default';
       const currentUserRole = (profile && profile.role) ? profile.role : 'user';
-      const avatarSourceName = profile?.username || user.email || 'User';
+      const avatarSourceName = profile?.username || user.username || 'User';
 
       window.CarsonGamesTheme.apply(currentBgSetting);
 

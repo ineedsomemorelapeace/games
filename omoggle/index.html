@@ -364,7 +364,7 @@
         .eq("id", user.id)
         .single();
 
-      currentUserProfile.username = userSnap ? userSnap.username : user.email.split('@')[0];
+      currentUserProfile.username = userSnap ? userSnap.username : (user.username || "User");
 
       authButtonContainer.innerHTML = '<a id="logout-btn" href="#" class="nav-auth-btn">Logout</a>';
       authButtonContainer.style.display = '';

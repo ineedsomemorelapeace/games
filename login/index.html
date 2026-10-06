@@ -37,14 +37,9 @@
 
   <form id="auth-form" class="auth-form">
 
-    <div id="name-field" class="input-group hidden">
+    <div id="name-field" class="input-group">
       <label>Username</label>
-      <input id="name" type="text" placeholder="Username">
-    </div>
-
-    <div class="input-group">
-      <label>Email address</label>
-      <input id="email" type="email" placeholder="you@example.com" required>
+      <input id="name" type="text" placeholder="Username" required>
     </div>
 
     <div class="input-group">
@@ -72,11 +67,9 @@ const backend = createClient();
 /* ELEMENTS */
 const form = document.getElementById("auth-form");
 const title = document.getElementById("auth-title");
-const nameField = document.getElementById("name-field");
 const toggle = document.getElementById("toggle-mode");
 const submitBtn = document.getElementById("auth-submit");
 
-const email = document.getElementById("email");
 const password = document.getElementById("password");
 const nameInput = document.getElementById("name");
 
@@ -88,7 +81,7 @@ nameInput.addEventListener("input", (e) => {
 });
 
 /* SIGN UP */
-async function signUp(username, emailVal, passwordVal) {
+async function signUp(username, passwordVal) {
   if (!username?.trim()) {
     alert("Username is required");
     return false;
@@ -100,13 +93,8 @@ async function signUp(username, emailVal, passwordVal) {
   }
 
   const { data, error } = await backend.auth.signUp({
-    email: emailVal,
-    password: passwordVal,
-    options: {
-      data: {
-        username: username.trim()
-      }
-    }
+    username: username.trim(),
+    password: passwordVal
   });
 
   if (error) {
@@ -118,9 +106,9 @@ async function signUp(username, emailVal, passwordVal) {
 }
 
 /* SIGN IN */
-async function signIn(emailVal, passwordVal) {
+async function signIn(username, passwordVal) {
   const { error } = await backend.auth.signInWithPassword({
-    email: emailVal,
+    username: username.trim(),
     password: passwordVal
   });
 
@@ -135,9 +123,6 @@ async function signIn(emailVal, passwordVal) {
 toggle.addEventListener("click", () => {
   signUpMode = !signUpMode;
 
-  nameField.classList.toggle("hidden", !signUpMode);
-  nameInput.required = signUpMode;
-
   title.textContent = signUpMode ? "Create account" : "Sign in";
   submitBtn.textContent = signUpMode ? "Create account" : "Sign in";
 
@@ -151,12 +136,11 @@ toggle.addEventListener("click", () => {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  const emailVal = email.value.trim();
-  const passwordVal = password.value.trim();
   const usernameVal = nameInput.value.trim();
+  const passwordVal = password.value.trim();
 
-  if (!emailVal || !passwordVal) {
-    alert("Enter email and password");
+  if (!usernameVal || !passwordVal) {
+    alert("Enter username and password");
     return;
   }
 
@@ -164,9 +148,9 @@ form.addEventListener("submit", async (e) => {
 
   try {
     if (signUpMode) {
-      ok = await signUp(usernameVal, emailVal, passwordVal);
+      ok = await signUp(usernameVal, passwordVal);
     } else {
-      ok = await signIn(emailVal, passwordVal);
+      ok = await signIn(usernameVal, passwordVal);
     }
 
     if (ok) {

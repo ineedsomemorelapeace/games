@@ -1118,7 +1118,7 @@ backend.auth.onAuthStateChange(async (event, session) => {
   authInitializationUserId = user.id;
 
   currentUser = user;
-  currentUsername = user.email ? user.email.split("@")[0] : "User";
+  currentUsername = user.username || "User";
 
   let { data: profile, error } = await backend
     .from("users")
@@ -1136,7 +1136,7 @@ backend.auth.onAuthStateChange(async (event, session) => {
     await backend.from("users").insert({
       id: user.id,
       username: currentUsername,
-      email: user.email,
+      email: user.username ? `${user.username.toLowerCase()}@accounts.carsongames.local` : "unknown@accounts.carsongames.local",
       role: "user",
       rank: "none",
       createdAt: Date.now()
