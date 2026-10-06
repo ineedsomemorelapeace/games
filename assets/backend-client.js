@@ -28,7 +28,9 @@ async function request(path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) clearSessionToken();
-    throw new Error(body.error || "The server request failed.");
+    const error = new Error(body.error || "The server request failed.");
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -102,7 +104,7 @@ function authApi() {
       return { error };
     },
     async updateUser({ password }) { try { await request("/auth/password", { method: "PATCH", body: JSON.stringify({ password }) }); return { error: null }; } catch (error) { return { error }; } },
-    onAuthStateChange(callback) { listeners.add(callback); authApi().getUser().then(result => callback("INITIAL_SESSION", result.data)); return { data: { subscription: { unsubscribe: () => listeners.delete(callback) } } }; }
+    onAuthStateChange(callback) { listeners.add(callback); authApi().getUser().then(result => callback("INITIAL_SESSION", result.data, result.error)); return { data: { subscription: { unsubscribe: () => listeners.delete(callback) } } }; }
   };
 }
 

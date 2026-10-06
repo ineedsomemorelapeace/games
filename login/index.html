@@ -102,6 +102,11 @@ async function signUp(username, passwordVal) {
     return false;
   }
 
+  const session = await backend.auth.getUser();
+  if (session.error || !session.data.user) {
+    alert(session.error?.message || "Your account was created, but the session could not be started.");
+    return false;
+  }
   return true;
 }
 
@@ -114,6 +119,11 @@ async function signIn(username, passwordVal) {
 
   if (error) {
     alert(error.message);
+    return false;
+  }
+  const session = await backend.auth.getUser();
+  if (session.error || !session.data.user) {
+    alert(session.error?.message || "Sign-in did not create a session.");
     return false;
   }
   return true;
@@ -154,7 +164,7 @@ form.addEventListener("submit", async (e) => {
     }
 
     if (ok) {
-      window.location.replace("/games/");
+      window.location.replace("../chat/");
     }
   } catch (error) {
     console.error("Authentication Error:", error);
