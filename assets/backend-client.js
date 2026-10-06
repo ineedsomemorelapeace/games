@@ -22,7 +22,7 @@ async function request(path, options = {}) {
 
   const response = await fetch(`${API_ROOT}${path}`, {
     ...requestOptions,
-    credentials: "include",
+    credentials: "omit",
     headers
   });
   const body = await response.json().catch(() => ({}));
