@@ -159,6 +159,152 @@ app.patch("/api/auth/password", requireUser(async (req, res) => {
   res.json({ ok: true });
 }));
 
+const blackjackMatches = new Map();
+let blackjackWaiting = null;
+
+const blackjackRanks = [
+  { rank: "A", value: 11 }, { rank: "2", value: 2 }, { rank: "3", value: 3 },
+  { rank: "4", value: 4 }, { rank: "5", value: 5 }, { rank: "6", value: 6 },
+  { rank: "7", value: 7 }, { rank: "8", value: 8 }, { rank: "9", value: 9 },
+  { rank: "10", value: 10 }, { rank: "J", value: 10 }, { rank: "Q", value: 10 },
+  { rank: "K", value: 10 }
+];
+const blackjackSuits = [
+  { suit: "♠", color: "black" }, { suit: "♥", color: "red" },
+  { suit: "♦", color: "red" }, { suit: "♣", color: "black" }
+];
+
+function makeBlackjackDeck() {
+  const deck = blackjackSuits.flatMap(({ suit, color }) => blackjackRanks.map(card => ({ ...card, suit, color })));
+  for (let index = deck.length - 1; index > 0; index -= 1) {
+    const swapIndex = crypto.randomInt(index + 1);
+    [deck[index], deck[swapIndex]] = [deck[swapIndex], deck[index]];
+  }
+  return deck;
+}
+
+function handScore(cards) {
+  let total = cards.reduce((sum, card) => sum + card.value, 0);
+  let aces = cards.filter(card => card.rank === "A").length;
+  while (total > 21 && aces > 0) { total -= 10; aces -= 1; }
+  return { total, soft: aces > 0 };
+}
+
+function blackjackPlayer(name) {
+  return { id: crypto.randomUUID(), name, cards: [], stood: false, bust: false, rematch: false, left: false };
+}
+
+function dealBlackjack(match) {
+  match.deck = makeBlackjackDeck();
+  match.players.forEach(player => {
+    player.cards = [match.deck.pop(), match.deck.pop()];
+    player.stood = false;
+    player.bust = false;
+    player.rematch = false;
+    player.left = false;
+    if (handScore(player.cards).total === 21) player.stood = true;
+  });
+  match.turn = match.players.find(player => !player.stood)?.id || null;
+  match.status = "playing";
+  match.result = null;
+  if (!match.turn) finishBlackjack(match);
+}
+
+function finishBlackjack(match) {
+  match.status = "finished";
+  match.turn = null;
+  const [first, second] = match.players;
+  const firstScore = handScore(first.cards).total;
+  const secondScore = handScore(second.cards).total;
+  if (first.bust && second.bust) match.result = "Both players busted - it’s a push.";
+  else if (first.bust) match.result = `${second.name} wins - ${first.name} busted.`;
+  else if (second.bust) match.result = `${first.name} wins - ${second.name} busted.`;
+  else if (firstScore === secondScore) match.result = `Push - both players scored ${firstScore}.`;
+  else match.result = firstScore > secondScore ? `${first.name} wins with ${firstScore}!` : `${second.name} wins with ${secondScore}!`;
+}
+
+function nextBlackjackTurn(match) {
+  const next = match.players.find(player => !player.stood && !player.bust && !player.left);
+  if (next) match.turn = next.id;
+  else finishBlackjack(match);
+}
+
+function publicBlackjackMatch(match, playerId) {
+  const player = match.players.find(item => item.id === playerId);
+  if (!player) return null;
+  const opponent = match.players.find(item => item.id !== playerId);
+  const view = item => {
+    const score = handScore(item.cards);
+    return {
+      id: item.id, name: item.name, cards: item.cards.map(({ rank, suit, color }) => ({ rank, suit, color })),
+      scoreLabel: item.bust ? "Bust" : score.soft ? `${score.total} (soft)` : String(score.total),
+      revealed: item.id === playerId || match.status === "finished" || item.stood || item.bust
+    };
+  };
+  return { status: match.status, turn: match.turn, you: view(player), opponent: opponent ? view(opponent) : null, result: match.result };
+}
+
+app.post("/api/blackjack/match", (req, res) => {
+  const name = typeof req.body.name === "string" ? req.body.name.trim().replace(/\s+/g, " ") : "";
+  if (!name || name.length > 20) return res.status(400).json({ error: "Enter a name between 1 and 20 characters." });
+  const player = blackjackPlayer(name);
+  if (!blackjackWaiting) {
+    const match = { id: crypto.randomUUID(), players: [player], status: "queued", deck: [], turn: null, result: null };
+    blackjackMatches.set(match.id, match);
+    blackjackWaiting = match;
+    return res.status(201).json({ matchId: match.id, playerId: player.id, status: "queued" });
+  }
+  const match = blackjackWaiting;
+  blackjackWaiting = null;
+  match.players.push(player);
+  dealBlackjack(match);
+  res.status(201).json({ matchId: match.id, playerId: player.id, status: match.status });
+});
+
+app.get("/api/blackjack/match/:id", (req, res) => {
+  const match = blackjackMatches.get(req.params.id);
+  const state = match && publicBlackjackMatch(match, req.query.playerId);
+  if (!state) return res.status(404).json({ error: "That table is no longer available." });
+  if (state.status === "queued") state.name = state.you.name;
+  res.json(state);
+});
+
+app.post("/api/blackjack/match/:id/action", (req, res) => {
+  const match = blackjackMatches.get(req.params.id);
+  const player = match?.players.find(item => item.id === req.body.playerId);
+  if (!match || !player) return res.status(404).json({ error: "That table is no longer available." });
+  const action = req.body.action;
+  if (action === "rematch") {
+    if (match.status !== "finished") return res.status(409).json({ error: "Finish the hand before starting a rematch." });
+    player.rematch = true;
+    if (match.players.every(item => item.rematch)) dealBlackjack(match);
+    else match.result = `Waiting for ${match.players.find(item => !item.rematch)?.name || "the other player"} to rematch.`;
+    return res.json(publicBlackjackMatch(match, player.id));
+  }
+  if (action === "leave") {
+    player.left = true;
+    player.stood = true;
+    if (match.status === "queued") {
+      if (blackjackWaiting === match) blackjackWaiting = null;
+      blackjackMatches.delete(match.id);
+      return res.json({ left: true });
+    }
+    if (match.status === "playing") finishBlackjack(match);
+    match.result = `${player.name} left the table.`;
+    return res.json(publicBlackjackMatch(match, player.id));
+  }
+  if (match.status !== "playing") return res.status(409).json({ error: "This hand is over." });
+  if (match.turn !== player.id) return res.status(409).json({ error: "Wait for your turn." });
+  if (action === "hit") {
+    player.cards.push(match.deck.pop());
+    if (handScore(player.cards).total > 21) { player.bust = true; nextBlackjackTurn(match); }
+  } else if (action === "stand") {
+    player.stood = true;
+    nextBlackjackTurn(match);
+  } else return res.status(400).json({ error: "Unknown blackjack action." });
+  res.json(publicBlackjackMatch(match, player.id));
+});
+
 app.post("/api/db/query", requireUser(async (req, res) => {
   const { table, operation, values = [], filters = [], select = "*", order, offset = 0, limit, rows: inputRows, returning } = req.body;
   if (!safeIdentifier(table)) return res.status(400).json({ error: "Invalid collection." });

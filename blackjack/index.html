@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blackjack | CarsonGames</title>
+  <script src="../assets/theme-loader.js"></script>
+  <link rel="stylesheet" href="../style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@700;800&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+  <style>
+    .blackjack-shell { width: min(1060px, calc(100% - 2rem)); margin: 2rem auto 4rem; }
+    .blackjack-panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-l); padding: clamp(1.25rem, 4vw, 2.5rem); box-shadow: 0 20px 70px rgba(0,0,0,.25); }
+    .screen { display: none; text-align: center; }
+    .screen.active { display: block; }
+    .blackjack-title { font: 800 clamp(2rem, 5vw, 3.4rem) var(--font-display); background: linear-gradient(135deg,#fff 25%,var(--accent)); background-clip: text; -webkit-background-clip: text; color: transparent; margin-bottom: .5rem; }
+    .blackjack-copy { color: var(--text-muted); max-width: 580px; margin: 0 auto 1.5rem; line-height: 1.6; }
+    .name-form { max-width: 390px; margin: 0 auto; display: grid; gap: .75rem; text-align: left; }
+    .name-form label { font-weight: 700; font-size: .85rem; }
+    .name-form input { width: 100%; }
+    .message { min-height: 1.5rem; color: #fb7185; font-weight: 700; margin-top: .85rem; }
+    .spinner { width: 54px; height: 54px; margin: 1rem auto 1.5rem; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .queue-name { color: var(--accent); font-weight: 700; }
+    .table { display: grid; gap: 1rem; }
+    .table-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; text-align: left; }
+    .table-head h2 { font: 800 1.7rem var(--font-display); }
+    .turn-badge { padding: .45rem .75rem; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); font-size: .8rem; font-weight: 700; }
+    .turn-badge.your-turn { color: var(--accent); border-color: var(--accent); }
+    .hands { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .hand { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 1rem; min-height: 190px; text-align: left; }
+    .hand h3 { display: flex; justify-content: space-between; font: 700 1rem var(--font-display); margin-bottom: .85rem; }
+    .score { color: var(--accent); font-size: .85rem; }
+    .cards { display: flex; flex-wrap: wrap; gap: .55rem; }
+    .playing-card { width: 64px; height: 92px; border-radius: 7px; background: #fff; color: #111827; padding: .4rem; display: flex; flex-direction: column; justify-content: space-between; font: 800 1rem var(--font-display); box-shadow: 0 5px 12px rgba(0,0,0,.25); }
+    .playing-card.red { color: #dc2626; }
+    .playing-card .suit { align-self: center; font-size: 1.6rem; }
+    .playing-card.back { background: repeating-linear-gradient(45deg,#27356d 0 4px,#34478e 4px 8px); border: 4px solid #fff; color: transparent; }
+    .actions { display: flex; justify-content: center; gap: .75rem; flex-wrap: wrap; margin-top: .35rem; }
+    .secondary { background: var(--surface) !important; border: 1px solid var(--border) !important; }
+    .result { padding: .9rem; border-radius: var(--radius-m); background: var(--surface); font-weight: 700; }
+    @media (max-width: 620px) { .hands { grid-template-columns: 1fr; } .table-head { align-items: flex-start; flex-direction: column; } .hand { min-height: 155px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="nav-container">
+      <a href="../" class="logo">CarsonGames</a>
+      <nav><ul>
+        <li><a href="../">Home</a></li><li><a href="../games/">Games</a></li>
+        <li><a href="../omoggle/">Omoggle</a></li><li><a href="#" class="active">Blackjack</a></li>
+        <li><a href="../chat/">Chat</a></li><li><a href="../settings/">Settings</a></li>
+        <li id="auth-button-container"></li>
+      </ul></nav>
+    </div>
+  </header>
+  <main class="blackjack-shell">
+    <section class="blackjack-panel">
+      <div id="lobby" class="screen active">
+        <h1 class="blackjack-title">BLACKJACK</h1>
+        <p class="blackjack-copy">Play a live head-to-head hand with a real shuffled deck. No account needed - just choose a name and find a table.</p>
+        <form id="name-form" class="name-form">
+          <label for="player-name">Your name</label>
+          <input id="player-name" class="input-field" maxlength="20" autocomplete="nickname" required placeholder="Enter a display name">
+          <button class="btn-primary" type="submit">Find Match</button>
+        </form>
+        <p id="lobby-message" class="message" role="status"></p>
+      </div>
+      <div id="queue" class="screen">
+        <div class="spinner" aria-hidden="true"></div>
+        <h2 class="blackjack-title">Finding a table...</h2>
+        <p class="blackjack-copy">You are queued as <span id="queued-name" class="queue-name"></span>. We’ll deal the first hand as soon as another player joins.</p>
+        <button id="cancel-queue" class="btn-primary secondary" type="button">Leave Queue</button>
+      </div>
+      <div id="game" class="screen">
+        <div class="table">
+          <div class="table-head"><h2>Live table</h2><span id="turn-badge" class="turn-badge"></span></div>
+          <div class="hands">
+            <article class="hand"><h3><span id="opponent-name">Opponent</span><span id="opponent-score" class="score"></span></h3><div id="opponent-cards" class="cards"></div></article>
+            <article class="hand"><h3><span id="your-name">You</span><span id="your-score" class="score"></span></h3><div id="your-cards" class="cards"></div></article>
+          </div>
+          <div id="result" class="result" hidden></div>
+          <div class="actions">
+            <button id="hit" class="btn-primary" type="button">Take a card</button>
+            <button id="stand" class="btn-primary secondary" type="button">Skip / Stand</button>
+            <button id="rematch" class="btn-primary" type="button" hidden>Rematch</button>
+            <button id="leave" class="btn-primary secondary" type="button">Leave</button>
+          </div>
+          <p id="game-message" class="message" role="status"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const API = location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "" : "https://carson-games-e801ce365c25.herokuapp.com";
+    const screens = Object.fromEntries(["lobby", "queue", "game"].map(id => [id, document.getElementById(id)]));
+    let matchId = null, playerId = null, pollTimer = null, current = null;
+    const $ = id => document.getElementById(id);
+    function show(id) { Object.values(screens).forEach(screen => screen.classList.toggle("active", screen === screens[id])); }
+    function message(id, text) { $(id).textContent = text || ""; }
+    async function call(path, options = {}) {
+      const response = await fetch(API + path, { headers: { "Content-Type": "application/json" }, ...options });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "The table could not be reached.");
+      return body;
+    }
+    function renderCard(card, hidden = false) {
+      if (hidden) return '<div class="playing-card back" aria-label="Hidden card"></div>';
+      return `<div class="playing-card ${card.color === "red" ? "red" : ""}"><span>${card.rank}</span><span class="suit">${card.suit}</span><span>${card.rank}</span></div>`;
+    }
+    function render(state) {
+      current = state;
+      $("your-name").textContent = state.you.name + " (You)";
+      $("opponent-name").textContent = state.opponent.name;
+      $("your-score").textContent = state.you.scoreLabel;
+      $("opponent-score").textContent = state.opponent ? state.opponent.scoreLabel : "";
+      $("your-cards").innerHTML = state.you.cards.map(card => renderCard(card)).join("");
+      $("opponent-cards").innerHTML = state.opponent ? state.opponent.cards.map((card, index) => renderCard(card, !state.opponent.revealed && index > 0)).join("") : "";
+      const yourTurn = state.status === "playing" && state.turn === state.you.id;
+      $("turn-badge").textContent = state.status === "finished" ? "Hand complete" : yourTurn ? "Your turn" : state.opponent.name + "'s turn";
+      $("turn-badge").classList.toggle("your-turn", yourTurn);
+      $("hit").disabled = !yourTurn; $("stand").disabled = !yourTurn;
+      $("result").hidden = state.status !== "finished";
+      $("result").textContent = state.result || "";
+      $("rematch").hidden = state.status !== "finished";
+      if (state.status === "finished") message("game-message", "Start another hand or leave the table.");
+    }
+    async function poll() {
+      if (!matchId) return;
+      try {
+        const state = await call(`/api/blackjack/match/${encodeURIComponent(matchId)}?playerId=${encodeURIComponent(playerId)}`);
+        if (state.status === "queued") { show("queue"); $("queued-name").textContent = state.name; }
+        else { show("game"); render(state); }
+        pollTimer = setTimeout(poll, 1000);
+      } catch (error) { message("game-message", error.message); }
+    }
+    async function join(name) {
+      const data = await call("/api/blackjack/match", { method: "POST", body: JSON.stringify({ name }) });
+      matchId = data.matchId; playerId = data.playerId; $("queued-name").textContent = name; show(data.status === "queued" ? "queue" : "game"); poll();
+    }
+    $("name-form").addEventListener("submit", async event => { event.preventDefault(); const name = $("player-name").value.trim(); if (!name) return; message("lobby-message", ""); try { await join(name); } catch (error) { message("lobby-message", error.message); } });
+    $("cancel-queue").addEventListener("click", async () => { if (matchId) await action("leave"); matchId = null; clearTimeout(pollTimer); show("lobby"); });
+    async function action(type) { try { await call(`/api/blackjack/match/${encodeURIComponent(matchId)}/action`, { method: "POST", body: JSON.stringify({ playerId, action: type }) }); if (type !== "leave") await poll(); } catch (error) { message("game-message", error.message); } }
+    $("hit").addEventListener("click", () => action("hit")); $("stand").addEventListener("click", () => action("stand")); $("rematch").addEventListener("click", () => action("rematch"));
+    $("leave").addEventListener("click", async () => { if (matchId) await action("leave"); matchId = null; clearTimeout(pollTimer); show("lobby"); message("lobby-message", "You left the table."); });
+  </script>
+</body>
+</html>
