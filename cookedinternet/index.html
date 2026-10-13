@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="color-scheme" content="dark">
+<title>NetSat</title>
+<style>
+  :root{
+    --bg:#0a0e13; --panel:#111823; --line:#1d2836; --txt:#e8eef7; --dim:#8797ab;
+    --acc:#2ee07e; --red:#ff5252; --amber:#ffbf47; --blue:#5aa9ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+    background:radial-gradient(1000px 500px at 50% -150px,#12202e,var(--bg) 70%) fixed,var(--bg);
+    color:var(--txt);
+    font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    -webkit-font-smoothing:antialiased;
+  }
+  main{width:100%;max-width:560px;text-align:center}
+
+  .status{
+    display:inline-flex;align-items:center;gap:9px;max-width:100%;
+    border:1px solid var(--line);background:var(--panel);border-radius:999px;
+    padding:7px 16px;font-size:12px;letter-spacing:1.5px;color:var(--dim);
+  }
+  #dot{width:9px;height:9px;border-radius:50%;background:#556;flex:none}
+  .running #dot{background:var(--acc);animation:pulse 1.1s infinite}
+  .warn #dot{background:var(--amber)}
+  .err #dot{background:var(--red)}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 #2ee07e88}
+    70%{box-shadow:0 0 0 9px #2ee07e00}
+    100%{box-shadow:0 0 0 0 #2ee07e00}
+  }
+
+  .speeds{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:26px 0}
+  .spd{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 12px;min-width:0}
+  .lbl{font-size:11px;letter-spacing:2px;color:var(--dim)}
+  .val{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:6px;white-space:nowrap}
+  .g{color:var(--acc)} .b{color:var(--blue)}
+  .tot{font-size:11px;color:var(--dim);margin-top:4px}
+  .off{opacity:.3}
+
+  .btns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button{
+    font:800 22px/1 ui-monospace,monospace;letter-spacing:4px;padding:26px 10px;
+    border-radius:14px;border:0;cursor:pointer;transition:transform .05s,filter .1s;
+  }
+  button:active{transform:translateY(1px)}
+  button:disabled{opacity:.3;cursor:not-allowed;filter:grayscale(.6)}
+  #startBtn{background:var(--acc);color:#04210f}
+  #stopBtn{background:var(--red);color:#2b0505}
+
+  .meta{margin-top:16px;font-size:11px;letter-spacing:.5px;color:var(--dim);min-height:16px}
+</style>
+</head>
+<body>
+<main>
+  <div class="status" id="status">
+    <span id="dot"></span><span id="statusText">LOADING…</span>
+  </div>
+
+  <div class="speeds">
+    <div class="spd" id="downCard">
+      <div class="lbl">▼ DOWN</div>
+      <div class="val g" id="down">0 Mbps</div>
+      <div class="tot" id="downTot">0 B</div>
+    </div>
+    <div class="spd" id="upCard">
+      <div class="lbl">▲ UP</div>
+      <div class="val b" id="up">0 Mbps</div>
+      <div class="tot" id="upTot">0 B</div>
+    </div>
+  </div>
+
+  <div class="btns">
+    <button id="startBtn">START</button>
+    <button id="stopBtn" disabled>STOP</button>
+  </div>
+
+  <div class="meta" id="meta"></div>
+</main>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ======================= WORKER (runs one flood loop per instance,
+     no timers, so background-tab throttling can't pause it) ======================= */
+  function NET_WORKER(){
+    'use strict';
+    var cfg = null, stopped = false, ctlSet = new Set();
+    var pendD = 0, pendU = 0, started = false;
+    var blockCache = null, rr = 0, duplexBroken = false;
+
+    self.onmessage = function(e){
+      var m = e.data || {};
+      if (m.t === 'cfg'){ cfg = m.cfg; if (!started) { started = true; main(); } }
+      if (m.t === 'stop'){
+        stopped = true;
+        ctlSet.forEach(function(c){ try{ c.abort(); }catch(_){ } });
+        ctlSet.clear();
+      }
+    };
+
+    function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+    function ac(){ var c = new AbortController(); ctlSet.add(c); return c; }
+    function flush(force){
+      if (pendD || pendU || force){ self.postMessage({t:'b', d:pendD, u:pendU}); pendD = 0; pendU = 0; }
+    }
+    function addD(n){ pendD += n; if (pendD + pendU > 1048576) flush(false); }
+    function addU(n){ pendU += n; if (pendD + pendU > 1048576) flush(false); }
+    function req(ok, err){ self.postMessage({t:'req', ok:ok?1:0, e:err?String(err):''}); }
+    function cb(url){
+      if (!cfg.cb) return url;
+      return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'nscb=' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    /* pull a file, stream-and-discard (or keep a capped slice for send-back) */
+    function downloadOnce(url, keep, cap){
+      var c = ac(), got = 0, chunks = keep ? [] : null, held = 0;
+      return fetch(cb(url), {cache:'no-store', signal:c.signal, credentials:'omit', headers:{'cache-control':'no-cache'}})
+        .then(function(r){
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          if (!r.body){ return r.arrayBuffer().then(function(b){ got = b.byteLength; addD(got); }); }
+          var rd = r.body.getReader();
+          function pump(){
+            return rd.read().then(function(res){
+              if (res.done) return;
+              var n = res.value.byteLength;
+              got += n; addD(n);
+              if (chunks && held < cap){
+                var room = cap - held;
+                if (n <= room){ chunks.push(res.value); held += n; }
+                else { chunks.push(res.value.subarray(0, room)); held += room; }
+              }
+              return pump();
+            });
+          }
+          return pump();
+        })
+        .then(function(){
+          req(true);
+          return chunks && held ? new Blob(chunks) : null;
+        })
+        .catch(function(err){ if (!stopped) req(false, err && err.message || err); throw err; })
+        .then(function(v){ ctlSet.delete(c); flush(true); return v; },
+              function(err){ ctlSet.delete(c); flush(true); throw err; });
+    }
+
+    /* stream the download straight into an upload (Chromium, duplex half) */
+    function downloadEcho(url){
+      var c = ac();
+      return fetch(cb(url), {cache:'no-store', signal:c.signal, credentials:'omit', headers:{'cache-control':'no-cache'}})
+        .then(function(r){
+          if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+          var ts = new TransformStream({
+            transform: function(chunk, ctrl){ addD(chunk.byteLength); addU(chunk.byteLength); ctrl.enqueue(chunk); }
+          });
+          var uc = ac();
+          return fetch(cfg.uploadUrl, {
+            method:'POST', body: r.body.pipeThrough(ts), duplex:'half',
+            signal: uc.signal, headers:{'content-type':'application/octet-stream'}
+          }).then(function(up){
+            return up.arrayBuffer().catch(function(){});
+          }).then(function(){ ctlSet.delete(uc); req(true); },
+                  function(err){ ctlSet.delete(uc); throw err; });
+        })
+        .catch(function(err){ if (!stopped) req(false, err && err.message || err); throw err; })
+        .then(function(v){ ctlSet.delete(c); flush(true); return v; },
+              function(err){ ctlSet.delete(c); flush(true); throw err; });
+    }
+
+    /* fallback: POST a buffered blob back out */
+    function echoBuffered(blob){
+      var c = ac();
+      var opts = {method:'POST', body:blob, cache:'no-store', signal:c.signal, headers:{'content-type':'text/plain'}};
+      if (cfg.nocors) opts.mode = 'no-cors';
+      return fetch(cfg.uploadUrl, opts)
+        .then(function(up){ if (cfg.nocors) return null; return up.arrayBuffer().catch(function(){}); })
+        .then(function(){ addU(blob.size); req(true); })
+        .catch(function(err){ if (!stopped) req(false, err && err.message || err); throw err; })
+        .then(function(v){ ctlSet.delete(c); flush(true); return v; },
+              function(err){ ctlSet.delete(c); flush(true); throw err; });
+    }
+
+    /* random incompressible block for upload-only mode */
+    function block(){
+      var size = cfg.upMB * 1048576;
+      if (!blockCache || blockCache.byteLength !== size){
+        blockCache = new Uint8Array(size);
+        for (var o = 0; o < size; o += 65536){
+          crypto.getRandomValues(blockCache.subarray(o, Math.min(o + 65536, size)));
+        }
+      }
+      return blockCache;
+    }
+    function uploadOnce(){
+      var b = block(), c = ac();
+      var opts = {method:'POST', body:b, cache:'no-store', signal:c.signal, headers:{'content-type':'text/plain'}};
+      if (cfg.nocors) opts.mode = 'no-cors';
+      return fetch(cfg.uploadUrl, opts)
+        .then(function(up){ if (cfg.nocors) return null; return up.arrayBuffer().catch(function(){}); })
+        .then(function(){ addU(b.byteLength); req(true); })
+        .catch(function(err){ if (!stopped) req(false, err && err.message || err); throw err; })
+        .then(function(v){ ctlSet.delete(c); flush(true); return v; },
+              function(err){ ctlSet.delete(c); flush(true); throw err; });
+    }
+
+    function nextUrl(){
+      var u = cfg.urls;
+      if (!u || !u.length) return null;
+      return u[rr++ % u.length];
+    }
+
+    function main(){
+      var errStreak = 0;
+      (function cycle(){
+        if (stopped) return;
+        var p;
+        if (cfg.mode === 'up'){
+          p = cfg.uploadUrl ? uploadOnce() : sleep(1000);
+        } else if (cfg.mode === 'echo' && cfg.uploadUrl){
+          var u = nextUrl();
+          if (!u){ p = sleep(1000); }
+          else if (duplexBroken || cfg.nocors){
+            p = downloadOnce(u, true, cfg.cap).then(function(blob){
+              if (stopped) return;
+              return blob ? echoBuffered(blob) : null;
+            });
+          } else {
+            p = downloadEcho(u).catch(function(err){
+              if (err && err.name === 'TypeError'){ duplexBroken = true; return; }
+              throw err;
+            });
+          }
+        } else {
+          var u2 = nextUrl();
+          p = u2 ? downloadOnce(u2, false, 0) : sleep(1000);
+        }
+        p.then(function(){ errStreak = 0; cycle(); },
+               function(){
+                 errStreak++;
+                 flush(true);
+                 var backoff = Math.min(5000, 150 * Math.pow(1.6, Math.min(errStreak, 8)));
+                 setTimeout(function(){ if (!stopped) cycle(); }, backoff);
+               });
+      })();
+    }
+  }
+
+  /* ======================= PAGE ======================= */
+  var $ = function(id){ return document.getElementById(id); };
+  var E = {
+    status:$('status'), statusText:$('statusText'), start:$('startBtn'), stop:$('stopBtn'),
+    down:$('down'), up:$('up'), downTot:$('downTot'), upTot:$('upTot'), meta:$('meta'),
+    downCard:$('downCard'), upCard:$('upCard')
+  };
+
+  /* optional URL params, no UI needed:
+     ?files=a.bin,b.bin   explicit file list      ?up=URL    upload endpoint (enables send-back)
+     ?mode=down|echo|up   force a mode            ?n=32      parallel workers
+     ?cb=1 cache-buster   ?nc=1 no-CORS uploads   ?cap=16 buffer MB   ?upmb=4 upload block MB */
+  var P = new URLSearchParams(location.search);
+  var CONF = {
+    mode: P.get('mode') || (P.get('up') ? 'echo' : 'down'),
+    uploadUrl: (P.get('up') || '').trim(),
+    nocors: P.get('nc') === '1',
+    cb: P.get('cb') === '1',
+    cap: Math.max(1, Math.min(512, +P.get('cap') || 16)) * 1048576,
+    upMB: Math.max(1, Math.min(64, +P.get('upmb') || 4)),
+    streams: Math.max(1, Math.min(256, +P.get('n') || 16))
+  };
+  var fileList = (P.get('files') || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+
+  var workers = [], running = false, uiTimer = null;
+  var wakeLock = null, actx = null, keepNodes = null;
+  var S = null;
+  var workerURL = URL.createObjectURL(new Blob(['(', NET_WORKER.toString(), ')();'], {type:'text/javascript'}));
+
+  function setStatus(txt, cls){
+    E.statusText.textContent = txt;
+    E.status.className = 'status' + (cls ? ' ' + cls : '');
+  }
+  function fmtBytes(n){
+    if (!n) return '0 B';
+    var u = ['B','kB','MB','GB','TB'], i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+    return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+  function fmtRate(bps){
+    var mbps = bps / 1e6;
+    if (mbps >= 1000) return (mbps / 1000).toFixed(2) + ' Gbps';
+    if (mbps >= 10) return mbps.toFixed(0) + ' Mbps';
+    if (mbps >= 1) return mbps.toFixed(1) + ' Mbps';
+    return Math.round(bps / 1e3) + ' kbps';
+  }
+
+  /* find testfile1.bin … testfile8.bin next to this page */
+  function discover(){
+    setStatus('CHECKING FILES…', 'warn');
+    var found = [];
+    var probes = [];
+    for (var i = 1; i <= 8; i++){
+      (function(name){
+        probes.push(fetch('./' + name, {method:'HEAD', cache:'no-store'}).then(function(r){
+          if (r.ok) found.push('./' + name);
+        }).catch(function(){}));
+      })('testfile' + i + '.bin');
+    }
+    return Promise.all(probes).then(function(){
+      found.sort();
+      return found;
+    });
+  }
+
+  function spawn(urls){
+    S = {d:0, u:0, req:0, err:0, lastD:0, lastU:0, lastT:performance.now(), t0:performance.now(), lastErr:''};
+    running = true;
+    E.start.disabled = true; E.stop.disabled = false;
+    var cfg = {
+      urls: urls, mode: CONF.mode, uploadUrl: CONF.uploadUrl, nocors: CONF.nocors,
+      cb: CONF.cb, cap: CONF.cap, upMB: CONF.upMB
+    };
+    for (var i = 0; i < CONF.streams; i++){
+      var w = new Worker(workerURL);
+      w.onmessage = function(e){
+        var m = e.data;
+        if (!S) return;
+        if (m.t === 'b'){ S.d += m.d; S.u += m.u; }
+        else if (m.t === 'req'){
+          if (m.ok) S.req++; else { S.err++; if (m.e && m.e !== S.lastErr){ S.lastErr = m.e; } }
+        }
+      };
+      w.onerror = function(){ if (S) S.err++; };
+      w.postMessage({t:'cfg', cfg:cfg});
+      workers.push(w);
+    }
+    var what = CONF.mode === 'up' ? 'uploading'
+             : (CONF.mode === 'echo' && CONF.uploadUrl) ? 'down+back ×' + urls.length + ' files'
+             : 'down ×' + urls.length + ' files';
+    setStatus('RUNNING · ' + what + ' · ' + CONF.streams + ' streams', 'running');
+    uiTimer = setInterval(tick, 250);
+    keepAliveOn();
+    window.addEventListener('beforeunload', unloadGuard);
+  }
+
+  function start(){
+    if (running) return;
+    E.start.disabled = true;
+    if (CONF.mode === 'up' && !CONF.uploadUrl){
+      setStatus('NEEDS ?up=ENDPOINT', 'err');
+      E.start.disabled = false; return;
+    }
+    if (CONF.mode === 'echo' && !CONF.uploadUrl) CONF.mode = 'down'; // no endpoint: download only
+    var ready = fileList.length ? Promise.resolve(fileList) : discover();
+    ready.then(function(urls){
+      if (!urls.length){
+        setStatus('NO TEST FILES — add testfile1.bin (…8) next to index.html', 'err');
+        E.start.disabled = false; return;
+      }
+      spawn(urls);
+    }, function(){
+      setStatus('FILE CHECK FAILED', 'err');
+      E.start.disabled = false;
+    });
+  }
+
+  function stop(){
+    if (!running) return;
+    running = false;
+    workers.forEach(function(w){ try{ w.postMessage({t:'stop'}); }catch(_){ } });
+    var ws = workers.slice();
+    setTimeout(function(){ ws.forEach(function(w){ try{ w.terminate(); }catch(_){ } }); }, 250);
+    workers = [];
+    clearInterval(uiTimer); uiTimer = null;
+    keepAliveOff();
+    window.removeEventListener('beforeunload', unloadGuard);
+    E.start.disabled = false; E.stop.disabled = true;
+    setStatus('STOPPED', '');
+    tick();
+  }
+
+  function tick(){
+    if (!S) return;
+    var now = performance.now();
+    var dt = Math.max((now - S.lastT) / 1000, 0.001);
+    var dr = (S.d - S.lastD) * 8 / dt, ur = (S.u - S.lastU) * 8 / dt;
+    S.lastD = S.d; S.lastU = S.u; S.lastT = now;
+
+    E.down.textContent = fmtRate(dr);
+    E.up.textContent = fmtRate(ur);
+    E.downTot.textContent = fmtBytes(S.d);
+    E.upTot.textContent = fmtBytes(S.u);
+    E.meta.textContent = S.req.toLocaleString() + ' requests · ' + S.err.toLocaleString() + ' errors · ' +
+      Math.floor((now - S.t0) / 1000 / 60) + ':' + String(Math.floor((now - S.t0) / 1000) % 60).padStart(2, '0');
+    document.title = (running ? '↓' + fmtRate(dr) + ' ↑' + fmtRate(ur) + ' · ' : '') + 'NetSat';
+
+    if (running && S.err > 0 && S.req === 0) setStatus('RUNNING · NOT GETTING DATA — check files / endpoint', 'warn');
+  }
+
+  function unloadGuard(e){ e.preventDefault(); e.returnValue = ''; }
+
+  async function keepAliveOn(){
+    try{ if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); }catch(_){ }
+    try{ // silent audio keeps the tab "audible" so the browser doesn't throttle it in the background
+      if (!actx){
+        actx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = actx.createOscillator(), g = actx.createGain();
+        g.gain.value = 0.0001; osc.frequency.value = 40;
+        osc.connect(g); g.connect(actx.destination); osc.start();
+        keepNodes = {osc:osc, g:g};
+      }
+      if (actx.state === 'suspended') await actx.resume();
+    }catch(_){ }
+  }
+  function keepAliveOff(){
+    if (wakeLock){ try{ wakeLock.release(); }catch(_){ } wakeLock = null; }
+    if (keepNodes){ try{ keepNodes.osc.stop(); keepNodes.g.disconnect(); }catch(_){ } keepNodes = null; }
+    if (actx){ try{ actx.close(); }catch(_){ } actx = null; }
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (running && !document.hidden && 'wakeLock' in navigator && !wakeLock){
+      navigator.wakeLock.request('screen').then(function(l){ wakeLock = l; }, function(){});
+    }
+  });
+
+  E.start.addEventListener('click', start);
+  E.stop.addEventListener('click', stop);
+
+  if (CONF.mode === 'up' || (CONF.mode === 'echo' && CONF.uploadUrl)) E.downCard.classList.toggle('off', CONF.mode === 'up');
+  if (CONF.mode === 'up') E.upCard.classList.remove('off');
+  else if (!CONF.uploadUrl) E.upCard.classList.add('off'); // no endpoint → up stays at 0
+  if (CONF.mode === 'echo' && !CONF.uploadUrl) CONF.mode = 'down';
+
+  (fileList.length ? Promise.resolve(true) : discover().then(function(f){ fileList = f; return true; }))
+    .then(function(){
+      if (running) return;
+      if (fileList.length) setStatus('IDLE · ready · ' + fileList.length + ' file' + (fileList.length > 1 ? 's' : ''), '');
+      else setStatus(CONF.mode === 'up' ? 'IDLE · upload only' : 'IDLE · no test files found', CONF.mode === 'up' ? '' : 'warn');
+    });
+})();
+</script>
+</body>
+</html>
