@@ -1,4 +1,4 @@
-const API_ROOT = "https://carson-games-e801ce365c25.herokuapp.com/api";
+const API_ROOT = "https://shiny-ermine-774.convex.site/api";
 const SESSION_TOKEN_KEY = "carson_games_session";
 
 function getSessionToken() {
