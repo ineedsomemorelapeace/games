@@ -2,7 +2,8 @@
   "name": "carsongames",
   "private": true,
   "scripts": {
-    "start": "node backend/server.js"
+    "start": "node backend/server.js",
+    "convex:dev": "convex dev"
   },
   "engines": {
     "node": ">=20"
@@ -10,6 +11,7 @@
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
+    "convex": "^1.28.0",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.1"
