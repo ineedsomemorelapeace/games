@@ -251,4 +251,31 @@ for (const path of ["/api/storage/upload", "/api/storage/list", "/api/storage/re
   }} )});
 }
 
+
+http.route({ path: "/api/blackjack/match", method: "POST", handler: httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    return json(await ctx.runAction(api.blackjack.join, { name: String(body.name || "") }));
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Could not join a table." }, 400);
+  }
+})});
+http.route({ path: "/api/blackjack/match/:matchId", method: "GET", handler: httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    return json(await ctx.runAction(api.blackjack.get, { matchId: url.pathname.split("/").pop() || "", playerId: url.searchParams.get("playerId") || "" }));
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Could not load the table." }, 400);
+  }
+})});
+http.route({ path: "/api/blackjack/match/:matchId/action", method: "POST", handler: httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const matchId = new URL(request.url).pathname.split("/").slice(-2, -1)[0] || "";
+    return json(await ctx.runAction(api.blackjack.act, { matchId, playerId: String(body.playerId || ""), action: String(body.action || "") }));
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Action failed." }, 400);
+  }
+})});
+
 export default http;
