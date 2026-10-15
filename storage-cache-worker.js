@@ -1,6 +1,6 @@
 const CACHE_NAME = 'carsongames-storage-v2';
 const STORAGE_HOST = 'shiny-ermine-774.convex.site';
-const STORAGE_PREFIX = '/api/storage/chat-files/';
+const STORAGE_PREFIX = '/api/storage/public';
 const MAX_CACHED_BYTES = 10 * 1024 * 1024;
 
 self.addEventListener('install', (event) => {
