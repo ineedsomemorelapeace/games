@@ -1,6 +1,6 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const http = httpRouter();
 
@@ -198,5 +198,57 @@ http.route({
   method: "OPTIONS",
   handler: httpAction(async () => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS" } })),
 });
+
+
+http.route({ path: "/api/storage/upload", method: "POST", handler: httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const result = await ctx.runAction(api.storage.save, {
+      token: bearer(request), bucket: String(body.bucket || ""), path: String(body.path || ""),
+      contentType: String(body.contentType || "application/octet-stream"), data: String(body.data || "")
+    });
+    return json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Upload failed.";
+    return json({ error: message }, message.includes("signed in") ? 401 : 400);
+  }
+})});
+http.route({ path: "/api/storage/list", method: "POST", handler: httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    return json(await ctx.runAction(api.storage.list, { token: bearer(request), bucket: String(body.bucket || ""), prefix: String(body.prefix || "") }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not list files.";
+    return json({ error: message }, message.includes("signed in") ? 401 : 400);
+  }
+})});
+http.route({ path: "/api/storage/remove", method: "POST", handler: httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const paths = Array.isArray(body.paths) ? body.paths.map(String) : [];
+    return json(await ctx.runAction(api.storage.remove, { token: bearer(request), bucket: String(body.bucket || ""), paths }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not remove files.";
+    return json({ error: message }, message.includes("signed in") ? 401 : 400);
+  }
+})});
+http.route({ path: "/api/storage/public", method: "GET", handler: httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    const item = await ctx.runQuery(internal.storage.find, { bucket: url.searchParams.get("bucket") || "", path: url.searchParams.get("path") || "" });
+    if (!item) return new Response("Not found", { status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
+    const blob = await ctx.storage.get(item.storageId);
+    if (!blob) return new Response("Not found", { status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
+    return new Response(blob, { status: 200, headers: { "Content-Type": item.contentType, "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300" } });
+  } catch {
+    return new Response("Could not read file", { status: 500, headers: { "Access-Control-Allow-Origin": "*" } });
+  }
+})});
+for (const path of ["/api/storage/upload", "/api/storage/list", "/api/storage/remove"]) {
+  http.route({ path, method: "OPTIONS", handler: httpAction(async () => new Response(null, { status: 204, headers: {
+    "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS"
+  }} )});
+}
 
 export default http;
