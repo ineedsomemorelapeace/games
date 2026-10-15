@@ -278,4 +278,12 @@ http.route({ path: "/api/blackjack/match/:matchId/action", method: "POST", handl
   }
 })});
 
+
+for (const path of ["/api/blackjack/match", "/api/blackjack/match/:matchId/action"]) {
+  http.route({ path, method: "OPTIONS", handler: httpAction(async () => new Response(null, { status: 204, headers: {
+    "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS"
+  }} )});
+}
+
 export default http;
