@@ -26,11 +26,11 @@ export const writeRecord = internalMutation({
   },
 });
 
-export const runQuery = action({
+async function hashToken(token: string) {\n  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));\n  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");\n}\n\nexport const runQuery = action({
   args: { token: v.string(), table: v.string(), operation: v.string(), filters: v.array(v.any()), order: v.optional(v.any()), limit: v.optional(v.number()), offset: v.optional(v.number()), rows: v.optional(v.any()), values: v.optional(v.any()) },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const user = await ctx.runAction(internal.auth.getUserForInternal, { token: args.token });
+    const user = await ctx.runQuery(internal.auth.getSessionUser, { tokenHash: await hashToken(args.token), now: Date.now() });
     if (!user) throw new Error("You must be signed in.");
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(args.table) || args.table === "users") throw new Error("Unsupported collection.");
     const all = await ctx.runQuery(internal.db.queryRecords, { collection: args.table, limit: 500 });
