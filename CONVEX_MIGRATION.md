@@ -15,7 +15,7 @@ The migration branch adds the initial Convex schema. Keep the current backend ac
 3. From the repository root, run:
 
    ```sh
-   npm install
+   npm install convex
    npx convex dev
    ```
 
