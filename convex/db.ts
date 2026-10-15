@@ -26,7 +26,12 @@ export const writeRecord = internalMutation({
   },
 });
 
-async function hashToken(token: string) {\n  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));\n  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");\n}\n\nexport const runQuery = action({
+async function hashToken(token: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+}
+
+export const runQuery = action({
   args: { token: v.string(), table: v.string(), operation: v.string(), filters: v.array(v.any()), order: v.optional(v.any()), limit: v.optional(v.number()), offset: v.optional(v.number()), rows: v.optional(v.any()), values: v.optional(v.any()) },
   returns: v.any(),
   handler: async (ctx, args) => {
