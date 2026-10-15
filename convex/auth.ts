@@ -198,6 +198,6 @@ export const getUser = action({
     if (!args.token) return null;
     const user = await ctx.runQuery(internal.auth.getSessionUser, { tokenHash: await hashText(args.token), now: Date.now() });
     if (!user) return null;
-    return { id: user.externalId, ...user };
+    return { id: user.externalId, username: user.username, role: user.role, rank: user.rank, grade: user.grade, tags: user.tags, background: user.background, avatar: user.avatar, mutedUntil: user.mutedUntil, bannedUntil: user.bannedUntil, banReason: user.banReason, createdAt: user.createdAt };
   },
 });
