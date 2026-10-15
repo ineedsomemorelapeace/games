@@ -82,7 +82,6 @@ http.route({
   }),
 });
 
-export default http;
 
 http.route({
   path: "/api/db/query",
@@ -122,3 +121,82 @@ http.route({
     },
   })),
 });
+
+
+http.route({
+  path: "/api/auth/signout",
+  method: "POST",
+  handler: httpAction(async () => json({ ok: true })),
+});
+http.route({
+  path: "/api/auth/password",
+  method: "PATCH",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      await ctx.runAction(api.legacy.updatePassword, { token: bearer(request), password: String(body.password ?? "") });
+      return json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update password.";
+      return json({ error: message }, message.includes("signed in") ? 401 : 400);
+    }
+  }),
+});
+http.route({
+  path: "/api/events",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const after = Number(new URL(request.url).searchParams.get("after") || 0);
+      return json(await ctx.runAction(api.legacy.listEvents, { token: bearer(request), after: Number.isFinite(after) ? after : 0 }));
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : "Could not read events." }, 401);
+    }
+  }),
+});
+http.route({
+  path: "/api/events/broadcast",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      if (typeof body.channel !== "string" || typeof body.event !== "string") return json({ error: "Invalid event." }, 400);
+      await ctx.runAction(api.legacy.publishEvent, { token: bearer(request), channel: body.channel, event: body.event, payload: body.payload ?? {} });
+      return json({ ok: true });
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : "Could not publish event." }, 401);
+    }
+  }),
+});
+http.route({
+  path: "/api/health",
+  method: "GET",
+  handler: httpAction(async () => json({ ok: true, backend: "convex" })),
+});
+http.route({
+  path: "/api/auth/signin",
+  method: "OPTIONS",
+  handler: httpAction(async () => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS" } })),
+});
+http.route({
+  path: "/api/auth/user",
+  method: "OPTIONS",
+  handler: httpAction(async () => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS" } })),
+});
+http.route({
+  path: "/api/auth/password",
+  method: "OPTIONS",
+  handler: httpAction(async () => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS" } })),
+});
+http.route({
+  path: "/api/events",
+  method: "OPTIONS",
+  handler: httpAction(async () => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS" } })),
+});
+http.route({
+  path: "/api/events/broadcast",
+  method: "OPTIONS",
+  handler: httpAction(async () => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS" } })),
+});
+
+export default http;
