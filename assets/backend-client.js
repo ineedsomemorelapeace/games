@@ -1,4 +1,4 @@
-const API_ROOT = "https://carson-games-e801ce365c25.herokuapp.com/api";
+const API_ROOT = "https://shiny-ermine-774.convex.site/api";
 const SESSION_TOKEN_KEY = "carson_games_session";
 
 function getSessionToken() {
@@ -126,11 +126,17 @@ function storageApi() {
     from(bucket) {
       return {
         async upload(path, file) {
-          try { await request(`/storage/${encodeURIComponent(bucket)}/${encodeURIComponent(path)}`, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }); return { error: null }; } catch (error) { return { error }; }
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+            await request("/storage/upload", { method: "POST", body: JSON.stringify({ bucket, path, contentType: file.type || "application/octet-stream", data: btoa(binary) }) });
+            return { error: null };
+          } catch (error) { return { error }; }
         },
-        async list(prefix = "") { try { return { data: (await request(`/storage/${encodeURIComponent(bucket)}?prefix=${encodeURIComponent(prefix)}`)).files, error: null }; } catch (error) { return { data: [], error }; } },
-        async remove(paths) { try { await request(`/storage/${encodeURIComponent(bucket)}`, { method: "DELETE", body: JSON.stringify({ paths }) }); return { error: null }; } catch (error) { return { error }; } },
-        getPublicUrl(path) { return { data: { publicUrl: `${API_ROOT}/storage/${encodeURIComponent(bucket)}/${path.split("/").map(encodeURIComponent).join("/")}` } }; }
+        async list(prefix = "") { try { return { data: (await request("/storage/list", { method: "POST", body: JSON.stringify({ bucket, prefix }) })).files, error: null }; } catch (error) { return { data: [], error }; } },
+        async remove(paths) { try { await request("/storage/remove", { method: "POST", body: JSON.stringify({ bucket, paths }) }); return { error: null }; } catch (error) { return { error }; } },
+        getPublicUrl(path) { return { data: { publicUrl: `${API_ROOT}/storage/public?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(path)}` } }; }
       };
     }
   };

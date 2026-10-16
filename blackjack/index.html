@@ -92,7 +92,7 @@
     </section>
   </main>
   <script>
-    const API = location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "" : "https://carson-games-e801ce365c25.herokuapp.com";
+    const API = location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "" : "https://shiny-ermine-774.convex.site";
     const screens = Object.fromEntries(["lobby", "queue", "game"].map(id => [id, document.getElementById(id)]));
     let matchId = null, playerId = null, pollTimer = null, current = null;
     const $ = id => document.getElementById(id);

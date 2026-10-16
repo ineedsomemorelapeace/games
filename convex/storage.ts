@@ -1,0 +1,16 @@
+import { action, internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { v } from "convex/values";
+async function auth(ctx: any, token: string) {
+ const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(token));
+ const tokenHash=Array.from(new Uint8Array(d),b=>b.toString(16).padStart(2,"0")).join("");
+ return ctx.runQuery(internal.auth.getSessionUser,{tokenHash,now:Date.now()});
+}
+export const list = action({args:{token:v.string(),bucket:v.string(),prefix:v.string()},returns:v.any(),handler:async(ctx,a)=>{if(!await auth(ctx,a.token))throw new Error("You must be signed in.");return ctx.runQuery(internal.storage.listInternal,{bucket:a.bucket,prefix:a.prefix});}});
+export const listInternal = internalQuery({args:{bucket:v.string(),prefix:v.string()},returns:v.any(),handler:async(ctx,a)=>{const xs=await ctx.db.query("storageObjects").withIndex("by_bucket_and_path",q=>q.eq("bucket",a.bucket)).take(1000);return {files:xs.filter(x=>x.path.startsWith(a.prefix)).map(x=>({name:x.path,size:x.size}))};}});
+export const save = action({args:{token:v.string(),bucket:v.string(),path:v.string(),contentType:v.string(),data:v.string()},returns:v.any(),handler:async(ctx,a)=>{if(!await auth(ctx,a.token))throw new Error("You must be signed in.");const bytes=Uint8Array.from(atob(a.data),c=>c.charCodeAt(0));const storageId=await ctx.storage.store(new Blob([bytes],{type:a.contentType}));await ctx.runMutation(internal.storage.link,{bucket:a.bucket,path:a.path,storageId,contentType:a.contentType,size:bytes.length});return {ok:true};}});
+export const link = internalMutation({args:{bucket:v.string(),path:v.string(),storageId:v.id("_storage"),contentType:v.string(),size:v.number()},returns:v.null(),handler:async(ctx,a)=>{const old=await ctx.db.query("storageObjects").withIndex("by_bucket_and_path",q=>q.eq("bucket",a.bucket).eq("path",a.path)).unique();if(old){await ctx.storage.delete(old.storageId);await ctx.db.delete(old._id);}await ctx.db.insert("storageObjects",{...a,updatedAt:Date.now()});return null;}});
+export const find = internalQuery({args:{bucket:v.string(),path:v.string()},returns:v.any(),handler:async(ctx,a)=>{const x=await ctx.db.query("storageObjects").withIndex("by_bucket_and_path",q=>q.eq("bucket",a.bucket).eq("path",a.path)).unique();return x?{storageId:x.storageId,contentType:x.contentType}:null;}});
+export const remove = action({args:{token:v.string(),bucket:v.string(),paths:v.array(v.string())},returns:v.any(),handler:async(ctx,a)=>{if(!await auth(ctx,a.token))throw new Error("You must be signed in.");for(const path of a.paths){const x=await ctx.runQuery(internal.storage.find,{bucket:a.bucket,path});if(x){const row=await ctx.runQuery(internal.storage.findDoc,{bucket:a.bucket,path});if(row)await ctx.runMutation(internal.storage.removeDoc,{id:row._id});}}return {ok:true};}});
+export const findDoc = internalQuery({args:{bucket:v.string(),path:v.string()},returns:v.any(),handler:async(ctx,a)=>await ctx.db.query("storageObjects").withIndex("by_bucket_and_path",q=>q.eq("bucket",a.bucket).eq("path",a.path)).unique()});
+export const removeDoc = internalMutation({args:{id:v.id("storageObjects")},returns:v.null(),handler:async(ctx,a)=>{const x=await ctx.db.get(a.id);if(x){await ctx.storage.delete(x.storageId);await ctx.db.delete(a.id);}return null;}});
