@@ -1,0 +1,152 @@
+You are continuing development of Lux, a self-hostable anti-censorship web proxy.
+Location: C:\Users\santi\Documents\workspace\proxy (GitHub: darksomaX/Lux)
+Stack: Node + Express + vanilla ESM frontend, Ultraviolet over wisp + Epoxy.
+
+CURRENT STATE (v0.4.0-dev, committed locally, NOT pushed):
+- Phase 1 DONE: Real multi-tab system (tabs.js), Chromium-style tab strip,
+  orphan detection, /s/ proxy prefix, crumb/URL sync on iframe load, search
+  engine reorder (Startpage/DDG/Com), panel chrome bars (macOS/Windows),
+  taskbar minimize-on-click. Verified 23/23 browser tests.
+- Phase 2a DONE: SW ad-blocker (host rules + cosmetic CSS inlined into the
+  UV service worker). Verified 6/6 proxy still works.
+
+YOUR REMAINING TASKS:
+
+══════════════════════════════════════════════
+TASK 2b: SCRAMJET V2 INTEGRATION
+══════════════════════════════════════════════
+Scramjet v1 is disabled (IndexedDB controller init bug, upstream). You must
+upgrade to v2.
+
+Steps:
+1. npm install @mercuryworkshop/scramjet-controller (the v2 package)
+2. Read the v2 architecture docs:
+   https://mercuryworkshop-scramjet.mintlify.app/concepts/architecture
+3. Read the reference app: https://github.com/MercuryWorkshop/Scramjet-App
+4. Wire v2 into public/js/engine.js, replacing the v1 scramjet code entirely.
+   - v2 is ESM-only. The controller is imported, not loaded via a classic script.
+   - v2 uses a different SW + controller init flow. Follow the docs exactly.
+   - Both engines (UV + Scramjet v2) use the SAME wisp backend.
+   - Both use Epoxy transport (libcurl's wasm is not shipped in npm).
+5. Update scripts/build-uv.mjs to copy the v2 bundles into public/scramjet/.
+6. Mark scramjet.available = true in engine.js.
+7. TEST in a real browser (Playwright): switch engine to Scramjet, load
+   example.com, confirm "Example Domain" renders in the frame.
+8. Offer two engines in settings: Ultraviolet (default) / Scramjet v2.
+
+CRITICAL: Two root-scoped service workers cannot coexist. When switching
+engines, unregister the old SW first (but do NOT unregister an installing SW
+that might be yourself). See engine.js UV init for the safe pattern.
+
+══════════════════════════════════════════════
+TASK 2c: DEVTOOLS REQUEST VIEWER
+══════════════════════════════════════════════
+Inspired by scramjet.mercurywork.shop which shows proxied requests live.
+
+Build a devtools panel (toggleable via a settings toggle "devtools"):
+- Shows proxied requests in real time: method, decoded URL, status, size.
+- Client-side overlay that reads from the service worker via postMessage.
+- The SW (uv.sw.js, built by scripts/build-uv.mjs) already intercepts every
+  fetch. Add a message channel: the SW posts {method, url, status, size}
+  for each proxied request to its clients; the devtools panel listens and
+  renders a table.
+- Add the toggle to settings.js (devtools: false default) and the settings UI.
+
+══════════════════════════════════════════════
+TASK 3: OS DESKTOP SHELL + WORD EDITOR
+══════════════════════════════════════════════
+3a. Desktop shell:
+- The home screen becomes a desktop: wallpaper area with file/shortcut icons
+  (default: a Settings shortcut).
+- Apps open as WINDOWS with macOS/Windows chrome (already have .win-chrome
+  buttons), draggable, resizable, focusable.
+- Build a window manager: public/js/wm.js. Windows are absolutely-positioned
+  divs with title bars. Click to focus (raise z-index). Drag by title bar.
+- The taskbar at the bottom stays. Clicking a taskbar app opens/focuses its
+  window instead of a full-panel overlay.
+
+3b. Word editor (Notes → Documents):
+- Replace the #editor-area textarea with TipTap (rich text editor, ~40KB).
+  npm install @tiptap/core @tiptap/starter-kit
+- Features: bold, italic, headings (H1/H2/H3), bullet/numbered lists, links,
+  images (data URLs). A formatting toolbar above the editor.
+- Multiple documents (not one "scratch"): a document list in the vault, each
+  saved as HTML in the encrypted vault (vault.js already supports arbitrary
+  bytes via saveNote/importFile — extend with a saveDocument(id, html) helper).
+- Export to .html and .txt.
+
+══════════════════════════════════════════════
+TASK 4: POLISH
+══════════════════════════════════════════════
+4a. Info panel (replace the ? help icon):
+- Move the "appears as 127.0.0.1" IP badge into an info (ⓘ) icon.
+- On hover, show a card directly above the icon: apparent IP, user-agent
+  (with spoof presets — a dropdown of common UAs), screen dimensions, time,
+  battery level (navigator.getBattery, Chromium only).
+
+4b. Night sky galaxy spin:
+- The stars canvas (initBackground in main.js) adds slow rotational drift
+  (galaxy-like spin) on top of twinkling. Use a rotating transform on the
+  star field.
+- IMPORTANT: updating a setting must NOT reset the constellation. The star
+  array should persist across settings changes (only regenerate on page reload).
+
+4c. Master volume + battery:
+- Inject an AudioContext gain node into proxied pages for master volume
+  control (best-effort — cross-origin audio may not be controllable).
+- A volume slider in the taskbar or info panel.
+- Show battery level in the info panel and optionally the taskbar.
+
+4d. Lux title animation:
+- Ensure the fade-in-from-below + gentle float is preserved (DeepSeek added
+  luxFadeIn/luxFloat keyframes). Verify it works after all changes.
+
+══════════════════════════════════════════════
+RULES
+══════════════════════════════════════════════
+1. Verify EVERY change in a real browser (Playwright). "Tests pass" is not
+   sufficient. Show the rendered content.
+2. Run "node --check <file>" on every JS file before committing. Zero syntax
+   errors. Zero import path mistakes.
+3. Do NOT push to GitHub. Commit locally only. The user will verify and push.
+4. Be honest about what works and what does not.
+5. The build script (scripts/build-uv.mjs) copies engine bundles into public/
+   and wires the SW. Always run "npm run build" after changing engine code.
+6. The UV service worker MUST be self-contained: build prepends importScripts
+   for the UV bundle, inlines the ad-block filters, and appends the fetch
+   handler wiring. Do NOT load uv.bundle.js separately expecting the SW to see it.
+7. Filters (public/data/filters.js) use ESM export keywords. The build strips
+   them before inlining into the classic-script SW. Do NOT importScripts the
+   ESM file directly.
+
+══════════════════════════════════════════════
+KEY FILE MAP
+══════════════════════════════════════════════
+server/index.js        Express + wisp + session auth + SW routes + /data route
+server/config.js       Mode (single/shared), port, host
+public/index.html      Home, tab strip, browser toolbar, panels, lock, taskbar
+public/css/styles.css  All styles (tabs, taskbar, panels, chrome, lock)
+public/js/main.js      Orchestrator: boot, navigate, tab strip render, settings
+public/js/tabs.js      Tab manager (each tab = own iframe + history)
+public/js/tab-nav.js   Bridge: tabs.js → engine/transport/url-scheme
+public/js/engine.js    UV (working) + Scramjet (currently disabled, upgrade to v2)
+public/js/transport.js bare-mux + Epoxy over wisp
+public/js/settings.js  All settings defaults
+public/data/filters.js Ad-block host rules + cosmetic CSS selectors
+scripts/build-uv.mjs   Copies bundles, wires SW with ad-block, changes prefix to /s/
+tests/browser/         Playwright tests (proxy-real, ui, circumvent)
+
+══════════════════════════════════════════════
+LESSONS LEARNED (avoid these)
+══════════════════════════════════════════════
+1. SW scope is isolated from the page. importScripts the bundle INSIDE the SW.
+2. uv.sw.js defines UVServiceWorker but never instantiates it. Build appends that.
+3. getEngine() must NOT cache — settings change the engine at runtime.
+4. navigator.serviceWorker.ready ≠ controlling. Wait for controllerchange.
+5. bare-mux exports BareMuxConnection as a named ESM export, not window.BareMux.
+6. scramjet.bundle.js is ESM (has export). scramjet.all.js is the IIFE build.
+   For v2 this may differ — check the package exports field.
+7. libcurl-transport ships no wasm. Use Epoxy for both engines.
+8. Two root-scoped SWs conflict. Unregister the old one before registering new.
+9. filters.js uses ESM export. Strip exports before inlining into the classic SW.
+10. jsdom cannot run modules or SWs. Always use Playwright with real Chromium.
