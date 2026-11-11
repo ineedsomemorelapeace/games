@@ -1,4 +1,4 @@
-import { createClient as createSupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
+import { createClient as createSupabaseClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/+esm";
 const SUPABASE_URL = "https://nboidswcvvszojuvthcf.supabase.co";
 const SUPABASE_KEY = "sb_publishable_q-rzIARDR4vBxvSS0AeIrw_mE_b6qeR";
 const supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -46,7 +46,10 @@ const auth = {
   signOut: () => supabase.auth.signOut(),
   updateUser: (attributes) => supabase.auth.updateUser(attributes),
   onAuthStateChange(callback) {
-    return supabase.auth.onAuthStateChange((event, session) => callback(event, decorateSession(session)));
+    return supabase.auth.onAuthStateChange((event, session) => {
+      const decorated = decorateSession(session);
+      window.setTimeout(() => callback(event, decorated), 0);
+    });
   }
 };
 const storage = {
