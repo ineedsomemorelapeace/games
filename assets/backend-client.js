@@ -1,243 +1,75 @@
-const API_ROOT = "https://carson-games-e801ce365c25.herokuapp.com/api";
-const SESSION_TOKEN_KEY = "carson_games_session";
-
-function getSessionToken() {
-  try {
-    const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
-    if (localToken) return localToken;
-  } catch {}
-  try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
+import { createClient as createSupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
+const SUPABASE_URL = "https://nboidswcvvszojuvthcf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_q-rzIARDR4vBxvSS0AeIrw_mE_b6qeR";
+const supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: "carsongames_supabase_auth" },
+  realtime: { params: { eventsPerSecond: 10 } }
+});
+function usernameEmail(username) {
+  const clean = String(username || "").trim().toLowerCase();
+  if (!/^[a-z0-9_.-]{3,24}$/.test(clean)) throw new Error("Username must be 3–24 characters and use only letters, numbers, dots, underscores, or hyphens.");
+  return clean + "@accounts.carsongames.local";
 }
-
-function clearSessionToken() {
-  try { localStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
-  try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
+function decorateUser(user) {
+  if (!user) return null;
+  return Object.assign(user, { username: user.user_metadata?.username || user.username || user.email?.split("@")[0] || "User" });
 }
-
-function storeSessionToken(token) {
-  if (!token) return;
-  try { localStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
-  try { sessionStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
+function decorateSession(session) {
+  if (session?.user) decorateUser(session.user);
+  return session;
 }
-
-async function request(path, options = {}) {
-  const { headers: optionHeaders, ...requestOptions } = options;
-  const headers = { "Content-Type": "application/json", ...(optionHeaders || {}) };
-  const token = getSessionToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  let response;
-  try {
-    response = await fetch(`${API_ROOT}${path}`, {
-      ...requestOptions,
-      credentials: "omit",
-      headers
-    });
-  } catch (error) {
-    const networkError = new Error("Unable to reach the authentication service. Check your connection and try again.");
-    networkError.cause = error;
-    throw networkError;
-  }
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401) clearSessionToken();
-    const error = new Error(body.error || "The server request failed.");
-    error.status = response.status;
-    throw error;
-  }
-  return body;
-}
-
-class Query {
-  constructor(table) {
-    this.table = table;
-    this.operation = "select";
-    this.selectColumns = "*";
-    this.filters = [];
-    this.orderBy = null;
-    this.maxRows = null;
-    this.values = [];
-    this.inputRows = null;
-  }
-
-  select(columns = "*") {
-    this.selectColumns = columns;
-    if (!this.inputRows && this.operation === "select") this.operation = "select";
-    this.returnRows = this.operation === "insert" || this.operation === "update";
-    return this;
-  }
-  eq(column, value) { this.filters.push({ column, operator: "eq", value }); return this; }
-  neq(column, value) { this.filters.push({ column, operator: "neq", value }); return this; }
-  ilike(column, value) { this.filters.push({ column, operator: "ilike", value }); return this; }
-  in(column, value) { this.filters.push({ column, operator: "in", value }); return this; }
-  contains(column, value) { this.filters.push({ column, operator: "contains", value }); return this; }
-  gte(column, value) { this.filters.push({ column, operator: "gte", value }); return this; }
-  not(column, operator, value) { this.filters.push({ column, operator: operator === "is" && value === null ? "not_null" : "neq", value }); return this; }
-  order(column, options = {}) { this.orderBy = { column, ascending: options.ascending !== false }; return this; }
-  limit(value) { this.maxRows = value; return this; }
-  range(from, to) { this.offset = from; this.maxRows = to - from + 1; return this; }
-  single() { this.singleResult = true; return this; }
-  maybeSingle() { this.singleResult = true; this.maybeSingleResult = true; return this; }
-  insert(rows) { this.operation = "insert"; this.inputRows = Array.isArray(rows) ? rows : [rows]; return this; }
-  update(values) { this.operation = "update"; this.values = [values]; return this; }
-  delete() { this.operation = "delete"; return this; }
-
-  async execute() {
+const auth = {
+  async signUp({ username, password }) {
     try {
-      const result = await request("/db/query", { method: "POST", body: JSON.stringify({ table: this.table, operation: this.operation, select: this.selectColumns, filters: this.filters, order: this.orderBy, offset: this.offset, limit: this.maxRows, values: this.values, rows: this.inputRows, returning: this.returnRows }) });
-      let data = result.data;
-      if (this.singleResult) data = data[0] || null;
-      return { data, error: null };
-    } catch (error) {
-      return { data: null, error };
-    }
-  }
-
-  then(resolve, reject) { return this.execute().then(resolve, reject); }
-}
-
-function authApi() {
-  const listeners = new Set();
-  const notify = user => listeners.forEach(listener => listener("SIGNED_IN", { user }));
-  return {
-    async signUp({ username, password }) {
-      try { const result = await request("/auth/signup", { method: "POST", body: JSON.stringify({ username, password }) }); storeSessionToken(result.token); notify(result.user); return { data: result, error: null }; }
-      catch (error) { return { data: null, error }; }
-    },
-    async signInWithPassword({ username, password }) {
-      try { const result = await request("/auth/signin", { method: "POST", body: JSON.stringify({ username, password }) }); storeSessionToken(result.token); notify(result.user); return { data: result, error: null }; }
-      catch (error) { return { data: null, error }; }
-    },
-    async getUser() { try { const result = await request("/auth/user"); return { data: { user: result.user }, error: null }; } catch (error) { return { data: { user: null }, error }; } },
-    async signOut() {
-      let error = null;
-      try { await request("/auth/signout", { method: "POST" }); } catch (requestError) { error = requestError; }
-      clearSessionToken();
-      notify(null);
-      return { error };
-    },
-    async updateUser({ password }) { try { await request("/auth/password", { method: "PATCH", body: JSON.stringify({ password }) }); return { error: null }; } catch (error) { return { error }; } },
-    onAuthStateChange(callback) { listeners.add(callback); authApi().getUser().then(result => callback("INITIAL_SESSION", result.data, result.error)); return { data: { subscription: { unsubscribe: () => listeners.delete(callback) } } }; }
-  };
-}
-
-function storageApi() {
-  return {
-    from(bucket) {
-      return {
-        async upload(path, file) {
-          try { await request(`/storage/${encodeURIComponent(bucket)}/${encodeURIComponent(path)}`, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }); return { error: null }; } catch (error) { return { error }; }
-        },
-        async list(prefix = "") { try { return { data: (await request(`/storage/${encodeURIComponent(bucket)}?prefix=${encodeURIComponent(prefix)}`)).files, error: null }; } catch (error) { return { data: [], error }; } },
-        async remove(paths) { try { await request(`/storage/${encodeURIComponent(bucket)}`, { method: "DELETE", body: JSON.stringify({ paths }) }); return { error: null }; } catch (error) { return { error }; } },
-        getPublicUrl(path) { return { data: { publicUrl: `${API_ROOT}/storage/${encodeURIComponent(bucket)}/${path.split("/").map(encodeURIComponent).join("/")}` } }; }
-      };
-    }
-  };
-}
-
-function parseChannelFilter(filter) {
-  if (!filter) return null;
-  const match = filter.match(/^([A-Za-z_][A-Za-z0-9_]*)=(eq|neq|ilike|gte)=(.*)$/);
-  return match ? { column: match[1], operator: match[2], value: match[3] } : null;
-}
-
-function createChannel(name) {
-  const databaseHandlers = [];
-  const broadcastHandlers = [];
-  let timer = null;
-  let eventCursor = 0;
-  let previousRows = null;
-  let stopped = false;
-
-  async function pollDatabase() {
-    const config = databaseHandlers[0]?.config;
-    if (!config || stopped) return;
-    const table = config.table;
-    const filter = parseChannelFilter(config.filter);
-    const query = request("/db/query", {
-      method: "POST",
-      body: JSON.stringify({ table, operation: "select", select: "*", filters: filter ? [filter] : [], order: { column: "id", ascending: true }, limit: 1000 })
-    });
-
+      const email = usernameEmail(username);
+      if (typeof password !== "string" || password.length < 8) throw new Error("Password must be at least 8 characters.");
+      const result = await supabase.auth.signUp({ email, password, options: { data: { username: String(username).trim() } } });
+      if (result.error) throw result.error;
+      if (!result.data.session) throw new Error("Account created, but Supabase requires email confirmation. In Dih, open Authentication → Sign In / Providers → Email and turn OFF Confirm email. These username-only accounts use an internal address and cannot receive confirmation emails.");
+      decorateUser(result.data.user);
+      return { data: result.data, error: null };
+    } catch (error) { return { data: null, error }; }
+  },
+  async signInWithPassword({ username, password }) {
     try {
-      const rows = (await query).data || [];
-      const currentRows = new Map(rows.map(row => [String(row.id), row]));
-      if (previousRows) {
-        for (const row of rows) {
-          const key = String(row.id);
-          const oldRow = previousRows.get(key);
-          const event = oldRow ? (JSON.stringify(oldRow) === JSON.stringify(row) ? null : "UPDATE") : "INSERT";
-          if (event) databaseHandlers.filter(handler => handler.event === "*" || handler.event === event).forEach(handler => handler.callback({ event, new: row, old: oldRow }));
-        }
-        for (const [key, oldRow] of previousRows) {
-          if (!currentRows.has(key)) databaseHandlers.filter(handler => handler.event === "*" || handler.event === "DELETE").forEach(handler => handler.callback({ event: "DELETE", old: oldRow }));
-        }
-      }
-      previousRows = currentRows;
-    } catch (error) {
-      console.warn(`Channel poll failed for ${table}:`, error);
-    }
+      const result = await supabase.auth.signInWithPassword({ email: usernameEmail(username), password });
+      if (result.error) throw result.error;
+      decorateUser(result.data.user);
+      return { data: result.data, error: null };
+    } catch (error) { return { data: null, error }; }
+  },
+  async getUser() {
+    const result = await supabase.auth.getUser();
+    if (result.data?.user) decorateUser(result.data.user);
+    return result;
+  },
+  signOut: () => supabase.auth.signOut(),
+  updateUser: (attributes) => supabase.auth.updateUser(attributes),
+  onAuthStateChange(callback) {
+    return supabase.auth.onAuthStateChange((event, session) => callback(event, decorateSession(session)));
   }
-
-  async function pollBroadcasts() {
-    if (stopped || !broadcastHandlers.length) return;
-    try {
-      const result = await request(`/events?after=${eventCursor}`);
-      eventCursor = result.nextCursor || eventCursor;
-      (result.events || []).filter(event => event.channel === name).forEach(event => {
-        broadcastHandlers.filter(handler => handler.event === event.event).forEach(handler => handler.callback({ payload: event.payload }));
-      });
-    } catch (error) {
-      console.warn(`Broadcast poll failed for ${name}:`, error);
-    }
+};
+const storage = {
+  from(bucket) {
+    const api = supabase.storage.from(bucket);
+    return {
+      upload(path, file, options = {}) {
+        return api.upload(path, file, { contentType: options.contentType || file?.type || "application/octet-stream", upsert: options.upsert ?? false, cacheControl: options.cacheControl || "3600" });
+      },
+      list(prefix = "", options = {}) { return api.list(prefix, options); },
+      remove(paths) { return api.remove(paths); },
+      getPublicUrl(path) { return api.getPublicUrl(path); },
+      createSignedUrl(path, expiresIn) { return api.createSignedUrl(path, expiresIn); }
+    };
   }
-
-  const channel = {
-    on(type, config, callback) {
-      if (type === "postgres_changes") databaseHandlers.push({ event: config.event || "*", config, callback });
-      if (type === "broadcast") broadcastHandlers.push({ event: config.event, callback });
-      return channel;
-    },
-    subscribe(callback) {
-      if (databaseHandlers.length) {
-        pollDatabase();
-        timer = setInterval(pollDatabase, 2000);
-      }
-      if (broadcastHandlers.length) {
-        pollBroadcasts();
-        timer = setInterval(pollBroadcasts, 1000);
-      }
-      callback?.("SUBSCRIBED");
-      return { unsubscribe() { channel.stop(); } };
-    },
-    async send(message) {
-      await request("/events/broadcast", { method: "POST", body: JSON.stringify({ channel: name, event: message.event, payload: message.payload }) });
-    },
-    stop() {
-      stopped = true;
-      if (timer) clearInterval(timer);
-      timer = null;
-    }
-  };
-  return channel;
-}
-
+};
 export function createClient() {
-  const auth = authApi();
-  const channels = new Set();
   return {
-    from: table => new Query(table),
+    from: (table) => supabase.from(table),
     auth,
-    storage: storageApi(),
-    channel: name => {
-      const channel = createChannel(name);
-      channels.add(channel);
-      return channel;
-    },
-    removeChannel: channel => {
-      channel?.stop?.();
-      channels.delete(channel);
-    }
+    storage,
+    channel: (name, options) => supabase.channel(String(name).replace(/^public:/, "cg:"), options),
+    removeChannel: (channel) => supabase.removeChannel(channel)
   };
 }
+export { supabase };
