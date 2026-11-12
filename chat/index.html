@@ -599,6 +599,10 @@
     .grade-6th { color: #86efac; background: rgba(134,239,172,0.12); }
     .grade-7th { color: #f87171; background: rgba(248,113,113,0.12); }
     .grade-8th { color: #60a5fa; background: rgba(96,165,250,0.12); }
+    .grade-9th { color: #c084fc; background: rgba(192,132,252,0.12); }
+    .grade-10th { color: #fbbf24; background: rgba(251,191,36,0.12); }
+    .grade-11th { color: #2dd4bf; background: rgba(45,212,191,0.12); }
+    .grade-12th { color: #fb923c; background: rgba(251,146,60,0.12); }
 
     .duel-card { background: var(--surface); border: 1px solid rgba(108, 99, 255, 0.2); border-radius: var(--radius-m); padding: 1rem; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.75rem; max-width: 440px; }
     .duel-card-msg { font-size: 0.95rem; color: #cbd5e1; font-weight: 600; -webkit-text-fill-color: currentColor; }
@@ -903,7 +907,7 @@ const EX_COMMANDS = [
   { name: "/help", desc: "Show commands available to you {/help}" },
   { name: "/ping", desc: "Check chat responsiveness {/ping}" },
   { name: "/who", desc: "List users currently known to chat {/who}" },
-  { name: "/grade", desc: "Set your grade tag {/grade 6th/7th/8th}" },
+  { name: "/grade", desc: "Set your grade tag {/grade 6th/7th/8th/9th/10th/11th/12th or none}" },
   { name: "/tag", desc: "Manage custom tags {/tag give @user crazy red}" },
   { name: "/tags", desc: "View a user's tags {/tags @user}" },
   { name: "/admin", desc: "Promote a user to Admin {/admin @user}" },
@@ -982,7 +986,11 @@ let avatarIndexByUserId = new Map();
 const GRADE_TAGS = {
   "6th": { label: "6th Grade", className: "grade-6th" },
   "7th": { label: "7th Grade", className: "grade-7th" },
-  "8th": { label: "8th Grade", className: "grade-8th" }
+  "8th": { label: "8th Grade", className: "grade-8th" },
+  "9th": { label: "9th Grade", className: "grade-9th" },
+  "10th": { label: "10th Grade", className: "grade-10th" },
+  "11th": { label: "11th Grade", className: "grade-11th" },
+  "12th": { label: "12th Grade", className: "grade-12th" }
 };
 
 function normalizeProfileTags(tags) {
@@ -2590,7 +2598,7 @@ async function startChat(user) {
       if (commandKey === "/grade") {
         const grade = effectiveSegments[1]?.toLowerCase();
         if (grade !== "none" && !GRADE_TAGS[grade]) {
-          showLocalSystemMessage("Syntax: /grade 6th, /grade 7th, /grade 8th, or /grade none", true);
+          showLocalSystemMessage("Syntax: /grade 6th, 7th, 8th, 9th, 10th, 11th, 12th, or /grade none", true);
           return;
         }
         const savedGrade = grade === "none" ? "" : grade;
