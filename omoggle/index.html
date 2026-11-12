@@ -733,10 +733,11 @@
     }
 
     function updateMatchPosition() {
-      // The host owns the shared scale. The guest sees the mirrored result.
-      if (isHost) {
-        currentScore = Math.max(0, Math.min(100, (opponentPerformance - localPerformance + 100) / 2));
-      }
+      // Each player computes the same comparison from their own and the opponent's live scores.
+      currentScore = isHost
+        ? (opponentPerformance - localPerformance + 100) / 2
+        : (localPerformance - opponentPerformance + 100) / 2;
+      currentScore = Math.max(0, Math.min(100, currentScore));
       renderUIFrames();
     }
 
