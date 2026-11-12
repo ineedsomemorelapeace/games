@@ -82,6 +82,8 @@ const nameField = document.getElementById("name-field");
 const emailField = document.getElementById("email-field");
 
 let signUpMode = false;
+nameField.classList.add("hidden");
+nameInput.required = false;
 
 /* REAL-TIME SPACE FILTER STRIPPER */
 nameInput.addEventListener("input", (e) => {
