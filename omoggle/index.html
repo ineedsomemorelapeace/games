@@ -49,6 +49,7 @@
     .player-label.opponent { left: auto; right: 12px; }
     .live-metrics { margin-top: auto; background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 4px; margin-bottom: 12px; font-family: var(--font-display); font-weight: 700; font-size: 1.1rem; color: var(--text-muted); z-index: 2; position: relative; }
     .winning .live-metrics { color: var(--accent); }
+    .tracking-status { position: absolute; z-index: 3; bottom: 48px; left: 8px; right: 8px; color: #fff; background: rgba(0,0,0,.68); border-radius: 6px; padding: 5px 7px; font-size: .72rem; font-weight: 700; pointer-events: none; }
     .timer-banner { font-family: var(--font-display); font-size: 2.2rem; font-weight: 800; color: #fff; margin-bottom: 1rem; }
     .scale-wrapper { width: 80%; max-width: 500px; margin: 0 auto; position: relative; }
     .scale-labels { display: flex; justify-content: space-between; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.4rem; text-transform: uppercase; }
@@ -100,6 +101,7 @@
             <span class="player-label">You</span>
             <video id="user-video" autoplay playsinline muted></video>
             <div id="user-aura-val" class="live-metrics">Aura: +500</div>
+            <div id="tracking-status" class="tracking-status">Starting eye tracking…</div>
           </div>
           <div id="slot-opponent" class="player-slot">
             <span class="player-label opponent" id="opponent-name">Unknown</span>
@@ -132,19 +134,135 @@
   <script type="module">
     import { createClient } from "../assets/backend-client.js";
 
-    let AuraEngine;
-    try {
-      const mod = await import("./auraEngine.js");
-      AuraEngine = mod.AuraEngine;
-      if (!AuraEngine || typeof AuraEngine.calculateMatchFlux !== 'function') throw new Error("Invalid AuraEngine");
-    } catch (e) {
-      console.warn("AuraEngine missing or invalid, using mock fallback.");
-      AuraEngine = {
-        calculateMatchFlux: (score) => {
-          const delta = (Math.random() - 0.5) * 8;
-          return Math.max(0, Math.min(100, score + delta));
+    // Omoggle uses live, neutral camera-performance metrics.
+    // No appearance, jawline, or facial-attractiveness scoring.
+    let FaceLandmarker = null;
+    let faceTracker = null;
+    let trackingTimer = null;
+    let localPerformance = 50;
+    let opponentPerformance = 50;
+    let lastSentPerformance = -1;
+    let previousPose = null;
+    let trackerReady = false;
+    let trackerStarting = false;
+    let trackingUnavailable = false;
+
+    async function startFaceTracker() {
+      if (faceTracker || trackerStarting || trackingUnavailable) return;
+      trackerStarting = true;
+      const status = document.getElementById("tracking-status");
+      try {
+        const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm");
+        const fileset = await vision.FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        );
+        faceTracker = await vision.FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          outputFaceBlendshapes: true
+        });
+        FaceLandmarker = vision.FaceLandmarker;
+        trackerReady = true;
+        if (status) status.textContent = "Tracking eyes + head position";
+        startTrackingLoop();
+      } catch (error) {
+        console.error("Omoggle face tracking could not start:", error);
+        trackingUnavailable = true;
+        if (status) status.textContent = "Eye tracking unavailable — check CDN access";
+      } finally {
+        trackerStarting = false;
+      }
+    }
+
+    function startTrackingLoop() {
+      if (trackingTimer) clearInterval(trackingTimer);
+      trackingTimer = setInterval(() => {
+        if (!trackerReady || !faceTracker || !userVideo || userVideo.readyState < 2 || !isMatchActive()) return;
+        try {
+          const result = faceTracker.detectForVideo(userVideo, performance.now());
+          const landmarks = result.faceLandmarks?.[0];
+          const blend = result.faceBlendshapes?.[0]?.categories || [];
+          if (!landmarks || landmarks.length < 478) {
+            document.getElementById("tracking-status").textContent = "Center your face in the camera";
+            localPerformance = smoothScore(localPerformance, 20, 0.18);
+            sendPerformance();
+            return;
+          }
+
+          const shape = Object.fromEntries(blend.map(item => [item.categoryName, item.score]));
+          const blink = ((shape.eyeBlinkLeft || 0) + (shape.eyeBlinkRight || 0)) / 2;
+          // Ordinary blinks are allowed; only sustained eye closure lowers this metric.
+          const eyesOpen = Math.max(0, Math.min(1, 1 - Math.max(0, blink - 0.25) / 0.75));
+
+          const irisRatio = (iris, a, b) => {
+            const left = landmarks[a].x;
+            const right = landmarks[b].x;
+            const low = Math.min(left, right);
+            const high = Math.max(left, right);
+            return (landmarks[iris].x - low) / Math.max(0.001, high - low);
+          };
+          const leftGaze = irisRatio(468, 33, 133);
+          const rightGaze = irisRatio(473, 362, 263);
+          const gazeOffset = (Math.abs(leftGaze - 0.5) + Math.abs(rightGaze - 0.5)) / 2;
+          const gazeForward = Math.max(0, 1 - gazeOffset / 0.34);
+
+          // Estimate a forward-facing head position from nose/eye geometry.
+          const eyeMidX = (landmarks[33].x + landmarks[263].x) / 2;
+          const eyeMidY = (landmarks[33].y + landmarks[263].y) / 2;
+          const eyeSpan = Math.max(0.001, Math.abs(landmarks[263].x - landmarks[33].x));
+          const faceHeight = Math.max(0.001, Math.abs(landmarks[10].y - landmarks[152].y));
+          const yawOffset = Math.abs(landmarks[1].x - eyeMidX) / eyeSpan;
+          const pitchOffset = Math.abs((landmarks[1].y - eyeMidY) / faceHeight - 0.38);
+          const headForward = Math.max(0, 1 - yawOffset / 0.28) * 0.65 +
+                              Math.max(0, 1 - pitchOffset / 0.28) * 0.35;
+
+          const pose = { x: landmarks[1].x, y: landmarks[1].y };
+          let stillness = 1;
+          if (previousPose) {
+            const movement = Math.hypot(pose.x - previousPose.x, pose.y - previousPose.y);
+            stillness = Math.max(0, 1 - movement / 0.035);
+          }
+          previousPose = pose;
+
+          const score = 100 * (
+            gazeForward * 0.38 +
+            stillness * 0.27 +
+            headForward * 0.20 +
+            eyesOpen * 0.15
+          );
+          localPerformance = smoothScore(localPerformance, score, 0.32);
+          const status = document.getElementById("tracking-status");
+          if (status) status.textContent =
+            `Eyes ${Math.round(eyesOpen * 100)}% · Forward ${Math.round(gazeForward * 100)}% · Still ${Math.round(stillness * 100)}%`;
+          sendPerformance();
+        } catch (error) {
+          console.warn("Face tracking frame failed:", error);
         }
-      };
+      }, 100);
+    }
+
+    function smoothScore(current, target, amount) {
+      return Math.max(0, Math.min(100, current + (target - current) * amount));
+    }
+
+    function isMatchActive() {
+      return stageMatch.classList.contains("active") && countdownText.style.display !== "none";
+    }
+
+    function sendPerformance() {
+      if (!currentConnection?.open) return;
+      if (Math.abs(localPerformance - lastSentPerformance) < 0.7) return;
+      lastSentPerformance = localPerformance;
+      currentConnection.send({ type: "sync_score", score: Math.round(localPerformance) });
+    }
+
+    function stopFaceTracker() {
+      if (trackingTimer) clearInterval(trackingTimer);
+      trackingTimer = null;
+      previousPose = null;
     }
 
     const OUTCOME_PHRASES = {
@@ -537,6 +655,7 @@
         currentConnection = null;
       }
       safelyStopCameraTracks();
+      stopFaceTracker();
       switchStage(stageLobby);
     }
 
@@ -559,6 +678,7 @@
           call.on('stream', (stream) => { opponentVideo.srcObject = stream; });
         }
         runShowdownEngine();
+        startFaceTracker();
       });
 
       currentConnection.on('data', (data) => {
@@ -566,8 +686,8 @@
           opponentNameTag.innerText = data.username;
         }
         if (data.type === 'sync_score') {
-          currentScore = Math.max(0, Math.min(100, Number(data.score) || 0));
-          renderUIFrames();
+          opponentPerformance = Math.max(0, Math.min(100, Number(data.score) || 0));
+          updateMatchPosition();
         }
       });
 
@@ -586,7 +706,13 @@
     function runShowdownEngine() {
       switchStage(stageMatch);
       countdownText.style.display = 'block'; resultText.style.display = 'none'; btnNext.style.display = 'none'; btnExit.style.display = 'none';
-      currentScore = 50; scaleNeedle.style.left = '50%';
+      currentScore = 50;
+      localPerformance = 50;
+      opponentPerformance = 50;
+      lastSentPerformance = -1;
+      previousPose = null;
+      scaleNeedle.style.left = '50%';
+      startFaceTracker();
 
       if (privateRoomId) {
         btnNext.style.setProperty("display", "none", "important");
@@ -601,12 +727,17 @@
       }, 1000);
 
       matchInterval = setInterval(() => {
-        if (isHost) {
-          currentScore = Math.max(0, Math.min(100, Number(AuraEngine.calculateMatchFlux(currentScore)) || 0));
-          if (currentConnection?.open) currentConnection.send({ type: 'sync_score', score: currentScore });
-          renderUIFrames();
-        }
-      }, 350);
+        sendPerformance();
+        updateMatchPosition();
+      }, 150);
+    }
+
+    function updateMatchPosition() {
+      // The host owns the shared scale. The guest sees the mirrored result.
+      if (isHost) {
+        currentScore = Math.max(0, Math.min(100, (opponentPerformance - localPerformance + 100) / 2));
+      }
+      renderUIFrames();
     }
 
     function renderUIFrames() {
@@ -646,7 +777,11 @@
       resultText.style.color = finalPosition < 48 ? "var(--accent)" : finalPosition > 52 ? "#ef4444" : "var(--text-muted)";
     }
 
-    function clearLoops() { clearInterval(timerInterval); clearInterval(matchInterval); }
+    function clearLoops() {
+      clearInterval(timerInterval);
+      clearInterval(matchInterval);
+      stopFaceTracker();
+    }
 
     function cleanExit() {
       if (currentConnection) currentConnection.close();
