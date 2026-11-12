@@ -1093,6 +1093,23 @@ export const AuraEngine = (() => {
     return score;
   }
 
+  // Neutral camera-performance score. This measures gaze direction,
+  // head position/stability, and eye openness—not facial appearance.
+  function calculateFocusScore({
+    gazeForward = 0.5,
+    stillness = 0.5,
+    headForward = 0.5,
+    eyesOpen = 0.5
+  } = {}) {
+    const score =
+      clamp(gazeForward) * 0.38 +
+      clamp(stillness) * 0.27 +
+      clamp(headForward) * 0.20 +
+      clamp(eyesOpen) * 0.15;
+
+    return Math.round(score * 100);
+  }
+
   function compareEvaluations(
     playerA,
     playerB
@@ -1941,6 +1958,7 @@ export const AuraEngine = (() => {
     clampPosition,
 
     calculateAuraScore,
+    calculateFocusScore,
     generateLiveMetrics,
 
     analyzeMeasurement,
