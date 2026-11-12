@@ -74,6 +74,7 @@ export function createClient() {
     from: (table) => supabase.from(table),
     auth,
     storage,
+    functions: { invoke: (...args) => supabase.functions.invoke(...args) },
     channel: (name, options) => supabase.channel(String(name).replace(/^public:/, "cg:"), options),
     removeChannel: (channel) => supabase.removeChannel(channel)
   };
