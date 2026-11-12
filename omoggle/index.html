@@ -133,6 +133,7 @@
 
   <script type="module">
     import { createClient } from "../assets/backend-client.js";
+    import { AuraEngine } from "./auraEngine.js";
 
     // Omoggle uses live, neutral camera-performance metrics.
     // No appearance, jawline, or facial-attractiveness scoring.
@@ -227,12 +228,12 @@
           }
           previousPose = pose;
 
-          const score = 100 * (
-            gazeForward * 0.38 +
-            stillness * 0.27 +
-            headForward * 0.20 +
-            eyesOpen * 0.15
-          );
+          const score = AuraEngine.calculateFocusScore({
+            gazeForward,
+            stillness,
+            headForward,
+            eyesOpen
+          });
           localPerformance = smoothScore(localPerformance, score, 0.32);
           const status = document.getElementById("tracking-status");
           if (status) status.textContent =
