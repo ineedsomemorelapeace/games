@@ -101,7 +101,7 @@
             <span class="player-label">You</span>
             <video id="user-video" autoplay playsinline muted></video>
             <div id="user-aura-val" class="live-metrics">Aura: +500</div>
-            <div id="tracking-status" class="tracking-status">Starting eye tracking…</div>
+            <div id="tracking-status" class="tracking-status">Try staying still and keeping your eyes forward</div>
           </div>
           <div id="slot-opponent" class="player-slot">
             <span class="player-label opponent" id="opponent-name">Unknown</span>
@@ -167,7 +167,7 @@
         });
         FaceLandmarker = vision.FaceLandmarker;
         trackerReady = true;
-        if (status) status.textContent = "Tracking eyes + head position";
+        if (status) status.textContent = "Try staying still and keeping your eyes forward";
         startTrackingLoop();
       } catch (error) {
         console.error("Omoggle face tracking could not start:", error);
