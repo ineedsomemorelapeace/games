@@ -39,7 +39,12 @@
 
     <div id="name-field" class="input-group">
       <label>Username</label>
-      <input id="name" type="text" placeholder="Username" required>
+      <input id="name" type="text" placeholder="Username" minlength="3" maxlength="24" autocomplete="username" required>
+    </div>
+
+    <div id="email-field" class="input-group">
+      <label>Email address</label>
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required>
     </div>
 
     <div class="input-group">
@@ -72,6 +77,9 @@ const submitBtn = document.getElementById("auth-submit");
 
 const password = document.getElementById("password");
 const nameInput = document.getElementById("name");
+const emailInput = document.getElementById("email");
+const nameField = document.getElementById("name-field");
+const emailField = document.getElementById("email-field");
 
 let signUpMode = false;
 
@@ -81,18 +89,18 @@ nameInput.addEventListener("input", (e) => {
 });
 
 /* SIGN UP */
-async function signUp(username, passwordVal) {
+async function signUp(username, email, passwordVal) {
   if (!username?.trim()) {
     alert("Username is required");
     return false;
   }
-
-  if (/\s/.test(username)) {
-    alert("Username cannot contain spaces!");
+  if (!email?.trim()) {
+    alert("Email address is required");
     return false;
   }
 
   const { data, error } = await backend.auth.signUp({
+    email: email.trim(),
     username: username.trim(),
     password: passwordVal
   });
@@ -111,9 +119,9 @@ async function signUp(username, passwordVal) {
 }
 
 /* SIGN IN */
-async function signIn(username, passwordVal) {
+async function signIn(email, passwordVal) {
   const { error } = await backend.auth.signInWithPassword({
-    username: username.trim(),
+    email: email.trim(),
     password: passwordVal
   });
 
@@ -140,6 +148,11 @@ toggle.addEventListener("click", () => {
     signUpMode ? "Already have an account?" : "Don't have an account?";
 
   toggle.textContent = signUpMode ? "Sign in" : "Create account";
+  nameField.classList.toggle("hidden", !signUpMode);
+  emailField.querySelector("label").textContent = signUpMode ? "Email address" : "Email address";
+  emailInput.placeholder = "you@example.com";
+  emailInput.autocomplete = "email";
+  nameInput.required = signUpMode;
 });
 
 /* FORM SUBMISSION */
@@ -147,10 +160,11 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const usernameVal = nameInput.value.trim();
+  const emailVal = emailInput.value.trim();
   const passwordVal = password.value;
 
-  if (!usernameVal || !passwordVal) {
-    alert("Enter username and password");
+  if (!emailVal || !passwordVal || (signUpMode && !usernameVal)) {
+    alert(signUpMode ? "Enter an email, username, and password." : "Enter your email and password.");
     return;
   }
 
@@ -158,9 +172,9 @@ form.addEventListener("submit", async (e) => {
 
   try {
     if (signUpMode) {
-      ok = await signUp(usernameVal, passwordVal);
+      ok = await signUp(usernameVal, emailVal, passwordVal);
     } else {
-      ok = await signIn(usernameVal, passwordVal);
+      ok = await signIn(emailVal, passwordVal);
     }
 
     if (ok) {
