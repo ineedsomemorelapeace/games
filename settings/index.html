@@ -413,6 +413,21 @@
     .status-error { color: #f87171; }
     .logged-out-msg { text-align: center; padding: 3rem 0; }
 
+    .delete-account-section { border: 1px solid rgba(239,68,68,.24); border-radius: var(--radius-l); padding: 1.5rem; background: rgba(127,29,29,.08); }
+    .delete-account-section h3 { color: #fca5a5; border-bottom-color: rgba(239,68,68,.25); }
+    .delete-account-copy { color: var(--text-muted); line-height: 1.6; margin: 0; }
+    .delete-account-btn { position: relative; overflow: hidden; width: 100%; min-height: 48px; border: 1px solid rgba(248,113,113,.45); border-radius: var(--radius-m); padding: .85rem 1rem; color: #fff; background: linear-gradient(135deg,#991b1b,#dc2626); font-family: var(--font-display); font-size: 1rem; font-weight: 800; cursor: pointer; box-shadow: 0 10px 24px rgba(127,29,29,.2); transition: transform .2s var(--ease), filter .2s var(--ease), opacity .2s; }
+    .delete-account-btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.12); }
+    .delete-account-btn:active:not(:disabled) { transform: translateY(0) scale(.99); }
+    .delete-account-btn:disabled { cursor: not-allowed; opacity: .5; }
+    .delete-confirm-panel { display: none; gap: 1rem; padding-top: .75rem; }
+    .delete-confirm-panel.is-open { display: flex; }
+    .delete-confirm-panel p { color: #fecaca; line-height: 1.6; margin: 0; }
+    .delete-confirm-panel .form-group input { border-color: rgba(248,113,113,.35); }
+    .delete-confirm-actions { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .delete-confirm-actions button { flex: 1 1 180px; }
+    .delete-cancel-btn { background: rgba(255,255,255,.05) !important; border: 1px solid var(--border) !important; color: #fff !important; box-shadow: none !important; }
+
     @media (max-width: 768px) {
       .background-grid-wrapper { grid-template-columns: repeat(3, 1fr); }
     }
@@ -667,6 +682,24 @@
         </div>
 
         <div id="owner-panel-injection-point"></div>
+
+        <section class="settings-section delete-account-section" aria-labelledby="delete-account-heading">
+          <h3 id="delete-account-heading">Delete Account</h3>
+          <p class="delete-account-copy">Permanently delete your CarsonGames account. Your private whispers and profile picture will be removed. Your public chat messages will remain but be anonymized as “Deleted User”.</p>
+          <button type="button" id="delete-account-start" class="delete-account-btn">Delete Account</button>
+          <div id="delete-account-confirm" class="delete-confirm-panel">
+            <p><strong>Are you sure?</strong> This cannot be undone. Type your exact username to confirm that you want to permanently delete your account.</p>
+            <div class="form-group">
+              <label for="delete-account-username">Your username</label>
+              <input type="text" id="delete-account-username" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your username">
+            </div>
+            <div class="delete-confirm-actions">
+              <button type="button" id="delete-account-cancel" class="btn-primary delete-cancel-btn">Cancel</button>
+              <button type="button" id="delete-account-confirm-btn" class="delete-account-btn" disabled>Permanently Delete Account</button>
+            </div>
+            <div id="delete-account-msg" class="status-msg" role="status" aria-live="polite"></div>
+          </div>
+        </section>
       `;
 
       const avatarInput = document.getElementById('avatar-input');
@@ -1132,6 +1165,31 @@
         }
         msgEl.textContent = 'Grade tag updated!';
         msgEl.className = 'status-msg status-success';
+      };
+
+      // Account deletion requires a fresh, exact username confirmation.
+      const deleteStartBtn = document.getElementById('delete-account-start');
+      const deleteConfirmPanel = document.getElementById('delete-account-confirm');
+      const deleteUsernameInput = document.getElementById('delete-account-username');
+      const deleteConfirmBtn = document.getElementById('delete-account-confirm-btn');
+      const deleteCancelBtn = document.getElementById('delete-account-cancel');
+      const deleteMsg = document.getElementById('delete-account-msg');
+      const expectedDeleteUsername = String(profile?.username || user.username || '').trim();
+      deleteStartBtn.onclick = () => { deleteConfirmPanel.classList.add('is-open'); deleteStartBtn.disabled = true; deleteUsernameInput.focus(); };
+      deleteCancelBtn.onclick = () => { deleteConfirmPanel.classList.remove('is-open'); deleteStartBtn.disabled = false; deleteUsernameInput.value = ''; deleteConfirmBtn.disabled = true; deleteMsg.textContent = ''; deleteMsg.className = 'status-msg'; };
+      deleteUsernameInput.oninput = () => { deleteConfirmBtn.disabled = deleteUsernameInput.value.trim() !== expectedDeleteUsername; };
+      deleteConfirmBtn.onclick = async () => {
+        if (deleteUsernameInput.value.trim() !== expectedDeleteUsername) { deleteMsg.textContent = 'The username does not match your account.'; deleteMsg.className = 'status-msg status-error'; return; }
+        deleteConfirmBtn.disabled = true; deleteCancelBtn.disabled = true; deleteMsg.textContent = 'Deleting your account...'; deleteMsg.className = 'status-msg';
+        try {
+          const result = await backend.functions.invoke('delete-account', { body: { username: deleteUsernameInput.value.trim() } });
+          if (result.error) { let detail = result.error.message || 'The account could not be deleted.'; try { const responseBody = await result.error.context?.json(); if (responseBody?.error) detail = responseBody.error; } catch {} throw new Error(detail); }
+          if (!result.data?.success) throw new Error(result.data?.error || 'The account could not be deleted.');
+          deleteMsg.textContent = 'Account deleted. Redirecting...'; deleteMsg.className = 'status-msg status-success';
+          localStorage.removeItem('carsongames-grade-' + user.id);
+          try { await backend.auth.signOut(); } catch {}
+          window.location.replace('../login/?deleted=1');
+        } catch (err) { deleteMsg.textContent = err.message || 'Account deletion failed. Please try again.'; deleteMsg.className = 'status-msg status-error'; deleteConfirmBtn.disabled = false; deleteCancelBtn.disabled = false; }
       };
 
       // Password Form Submission
